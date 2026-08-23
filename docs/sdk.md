@@ -17,6 +17,8 @@ const client = new OpenSeaCLI({ apiKey: process.env.OPENSEA_API_KEY })
 | `apiKey` | `string` | *required* | OpenSea API key |
 | `baseUrl` | `string` | `https://api.opensea.io` | API base URL override |
 | `chain` | `string` | `"ethereum"` | Default chain |
+| `timeout` | `number` | `30000` | Request timeout in milliseconds |
+| `verbose` | `boolean` | `false` | Log requests and responses to stderr |
 
 ## Collections
 

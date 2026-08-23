@@ -1,5 +1,30 @@
 # @opensea/cli
 
+## 2.1.0
+
+### Minor Changes
+
+- bbbbfea: CLI: the `agent` commands now take a username or ENS name anywhere they took an address, and the owner's side of the handshake gets its own verbs.
+
+  `opensea agent add`, `accept`, and `remove` are `propose`, `confirm`, and `revoke` with `--role OWNER` fixed. Asking an account to become your agent is the direction most people are in, and it previously required knowing that `--role` describes your own side, not the counterparty's. The three generic verbs keep `--role` and are unchanged, so an agent program holding a scoped token still has the agent-initiated path.
+
+  `add`, `accept`, `remove`, `propose`, `confirm`, and `revoke` all accept an OpenSea username, an ENS name, or a wallet address. The API's `counterparty_address` field takes an address literally and answers a username with 400 "Invalid counterparty address", so the CLI resolves the identifier through `/api/v2/accounts/resolve` before writing. An address short-circuits, so the common case costs no extra request, and an identifier that resolves to nothing fails before any write is attempted.
+
+  Nothing is removed and no existing invocation changes behavior.
+
+### Patch Changes
+
+- c7342f6: `login`: validate the authorization URL and open it by argv on Windows instead of through `cmd /c start`. The URL is built on the `authorization_endpoint` the SDK reads from the authorization server's OIDC discovery response, so it is not a literal. `spawn` quotes arguments by the C runtime rules and cmd.exe does not parse its command line by those rules, so the hand-added quotes ended early and anything after the next `&` was parsed by cmd as a separate command. The URL is now parsed and re-serialized before it becomes a process argument, which also rejects a `file:`/`javascript:` URL and a bare word that the platform opener would read as one of its own flags.
+- Updated dependencies [bbbbfea]
+- Updated dependencies [34d3a50]
+- Updated dependencies [34d3a50]
+- Updated dependencies [f1882a8]
+- Updated dependencies [3cc8640]
+- Updated dependencies [ea967e2]
+- Updated dependencies [93f028c]
+  - @opensea/sdk@12.0.1
+  - @opensea/wallet-adapters@0.3.5
+
 ## 2.0.0
 
 ### Major Changes

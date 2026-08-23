@@ -237,19 +237,58 @@ async function runDeviceFlow(
   return oauth.pollDeviceToken(device)
 }
 
-/** Open a URL in the user's default browser (best-effort, cross-platform). */
-function openBrowser(url: string): void {
-  const command =
-    process.platform === "darwin"
-      ? "open"
-      : process.platform === "win32"
-        ? "cmd"
-        : "xdg-open"
-  // cmd.exe's `start` treats `&` as a command separator, so the OAuth URL
-  // (which is full of `&`-joined query params) must be quoted or it gets
-  // truncated at the first `&` and login silently fails on Windows.
-  const args =
-    process.platform === "win32" ? ["/c", "start", "", `"${url}"`] : [url]
+/**
+ * Argv for handing `url` to the platform's default browser.
+ *
+ * The Windows branch deliberately avoids `cmd /c start`. `spawn` without
+ * `shell: true` quotes arguments using the C runtime rules, and cmd.exe does
+ * not parse its command line by those rules: it does not treat `\"` as an
+ * escaped quote, so the escaping Node applies ends the quoted section early
+ * and everything after the next `&` is parsed by cmd as a separate command.
+ * `rundll32 url.dll,FileProtocolHandler` takes the URL as an ordinary
+ * argument and passes it to ShellExecute, so nothing re-parses it.
+ */
+function browserOpenArgv(
+  url: string,
+  platform: NodeJS.Platform,
+): { command: string; args: string[] } {
+  if (platform === "darwin") {
+    return { command: "open", args: [url] }
+  }
+  if (platform === "win32") {
+    return { command: "rundll32", args: ["url.dll,FileProtocolHandler", url] }
+  }
+  return { command: "xdg-open", args: [url] }
+}
+
+/**
+ * Open a URL in the user's default browser (best-effort, cross-platform).
+ *
+ * The URL is not a literal. In the loopback flow it is built on
+ * `authorization_endpoint`, which the SDK reads out of the authorization
+ * server's OIDC discovery response, so the string that reaches this function
+ * has travelled over the network. Parse it and re-serialize the parsed value
+ * before it becomes a process argument: that rejects anything that is not
+ * http(s) (a `file:` or `javascript:` URL, or a bare word that the browser
+ * opener would read as one of its own flags) and drops the tab, newline and
+ * control characters the URL parser strips.
+ */
+function openBrowser(rawUrl: string): void {
+  let parsed: URL
+  try {
+    parsed = new URL(rawUrl)
+  } catch {
+    console.error(`Refusing to open a malformed authorization URL:\n${rawUrl}`)
+    return
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    console.error(
+      `Refusing to open a non-http(s) authorization URL:\n${rawUrl}`,
+    )
+    return
+  }
+  const url = parsed.toString()
+  const { command, args } = browserOpenArgv(url, process.platform)
   try {
     const child = spawn(command, args, { stdio: "ignore", detached: true })
     child.on("error", () => {

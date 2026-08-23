@@ -154,14 +154,32 @@ The wallet-level agent designation used to live here as `mark-agent` and
 ## Agent accounts
 
 ```bash
+# The owner's side: "I ask an account to become my agent".
+opensea agent add <identifier>
+opensea agent accept <identifier>
+opensea agent remove <identifier>
+
+# The agent's side, and either side explicitly.
 opensea agent declare
 opensea agent withdraw
-opensea agent propose <counterparty_address> --role AGENT|OWNER
-opensea agent confirm <counterparty_address> --role AGENT|OWNER
-opensea agent revoke <counterparty_address> --role AGENT|OWNER
+opensea agent propose <identifier> --role AGENT|OWNER
+opensea agent confirm <identifier> --role AGENT|OWNER
+opensea agent revoke <identifier> --role AGENT|OWNER
+
 opensea agent list
 opensea agent profile <address_or_username>
 ```
+
+Every `<identifier>` takes an OpenSea username, an ENS name, or a wallet
+address. The API's `counterparty_address` field takes an address literally and
+answers a username with 400 "Invalid counterparty address", so the CLI resolves
+the identifier through `/api/v2/accounts/resolve` first. An address is passed
+straight through with no lookup.
+
+`add`, `accept`, and `remove` are `propose`, `confirm`, and `revoke` with
+`--role OWNER` fixed, because asking an account to become your agent is the
+common direction. An agent program holding a scoped token uses the three
+generic verbs with `--role AGENT`.
 
 An agent is an account, not a flag on a wallet. Ownership is a relationship
 between two accounts that both sides confirm. Three things it is not:
@@ -195,12 +213,20 @@ that cannot tell who moved first can just call `propose`:
 ```bash
 # On the agent, declaring itself and asking the owner to confirm.
 opensea agent declare
-opensea agent propose 0xOWNER --role AGENT
+opensea agent propose ryanryanryanryan --role AGENT
 opensea agent list   # status PENDING_OWNER, awaiting_confirmation_from OWNER
 
 # On the owner. Either of these lands the same confirmed relationship.
-opensea agent confirm 0xAGENT --role OWNER
-opensea agent propose 0xAGENT --role OWNER
+opensea agent accept imatestagent123
+opensea agent add imatestagent123
+```
+
+The owner can also move first, which leaves the relationship
+`PENDING_AGENT` until the agent confirms:
+
+```bash
+opensea agent add imatestagent123          # on the owner
+opensea agent confirm ryanryanryanryan --role AGENT   # on the agent
 ```
 
 > REST list commands support cursor-based pagination. The search command returns a flat list with no cursor. See [pagination.md](pagination.md) for details.

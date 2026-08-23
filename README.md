@@ -9,6 +9,10 @@
 
 # opensea-cli <!-- omit in toc -->
 
+> **Read-only mirror.** This package is developed in a private monorepo and mirrored to [ProjectOpenSea/opensea-cli](https://github.com/ProjectOpenSea/opensea-cli) when a version is released, so the public code can trail the internal main branch by weeks.
+>
+> Pull requests opened on the mirror cannot be merged there. They are read, and a fix worth taking is recreated in the monorepo. Because a fix that has landed internally is not public until the next release, filing an issue before writing a patch is the quickest way to find out whether a bug is already fixed.
+
 Query the OpenSea API from the command line or programmatically. Designed for both AI agents and developers.
 
 ## Table of Contents
@@ -227,9 +231,7 @@ npm run type-check      # TypeScript type checking
 
 ## Contributing
 
-This repository is a read-only mirror synced from an internal monorepo. We can't merge pull requests directly, but we review every one — if your fix or idea is solid, we'll recreate it internally and it will ship in the next release.
-
-Issues and bug reports are the best way to contribute. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+Issues and bug reports are the best way to contribute, and the mirror notice at the top of this page covers what happens to a pull request. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
 
 ## License
 

@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
   parseFloatOption,
   parseIntOption,
   parseTraitsOption,
+  readJsonBodyOption,
 } from "../src/parse.js"
 
 describe("parseIntOption", () => {
@@ -41,6 +45,45 @@ describe("parseFloatOption", () => {
   it("throws on empty string", () => {
     expect(() => parseFloatOption("", "--slippage")).toThrow(
       'Invalid value for --slippage: "" is not a number',
+    )
+  })
+})
+
+describe("readJsonBodyOption", () => {
+  let dir: string
+
+  beforeEach(() => {
+    // mkdtemp, not a Date.now() suffix: two concurrent runs must not collide.
+    dir = mkdtempSync(join(tmpdir(), "opensea-cli-parse-"))
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("reads and parses a JSON file", () => {
+    const path = join(dir, "body.json")
+    writeFileSync(path, JSON.stringify({ key: "value", num: 100 }))
+
+    expect(readJsonBodyOption(path, "--body")).toEqual({
+      key: "value",
+      num: 100,
+    })
+  })
+
+  it("names the option and the path when the file cannot be read", () => {
+    const path = join(dir, "absent.json")
+    expect(() => readJsonBodyOption(path, "--body")).toThrow(
+      `Could not read --body from '${path}'`,
+    )
+  })
+
+  it("names the option and the path when the file is not valid JSON", () => {
+    const path = join(dir, "invalid.json")
+    writeFileSync(path, "{ not json }")
+
+    expect(() => readJsonBodyOption(path, "--body")).toThrow(
+      `Could not parse --body '${path}' as JSON`,
     )
   })
 })

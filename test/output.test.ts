@@ -38,6 +38,23 @@ describe("formatOutput", () => {
       expect(formatOutput([], "table")).toBe("(empty)")
     })
 
+    it("includes a field that first appears on a later row", () => {
+      const result = formatOutput(
+        [
+          { name: "CryptoPunk #1", price: "10 ETH" },
+          { name: "Bored Ape #2", price: "5 ETH", rarity: "Rare" },
+        ],
+        "table",
+      )
+      const lines = result.split("\n")
+
+      expect(lines[0]).toContain("rarity")
+      expect(lines[3]).toContain("Rare")
+      // The row missing the key renders blank rather than shifting columns.
+      expect(lines[2]).toContain("CryptoPunk #1")
+      expect(lines[2]).not.toContain("Rare")
+    })
+
     it("returns (empty) for empty object", () => {
       expect(formatOutput({}, "table")).toBe("(empty)")
     })

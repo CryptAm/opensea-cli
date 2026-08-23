@@ -35,7 +35,14 @@ export function formatOutput(data: unknown, format: OutputFormat): string {
 function formatTable(data: unknown): string {
   if (Array.isArray(data)) {
     if (data.length === 0) return "(empty)"
-    const keys = Object.keys(data[0] as Record<string, unknown>)
+    // Columns are the union of every row's keys, in first-seen order. Reading
+    // only data[0] silently drops fields that appear later, and API responses
+    // carry optional fields that differ between items.
+    const keys = [
+      ...new Set(
+        data.flatMap(row => Object.keys(row as Record<string, unknown>)),
+      ),
+    ]
     const widths = keys.map(key =>
       Math.max(
         key.length,
