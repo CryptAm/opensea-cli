@@ -84,6 +84,20 @@ export type CollectionBatchResponse = Schemas["CollectionBatchResponse"]
 export type CreateListingActionsRequest = Schemas["CreateListingActionsRequest"]
 export type CreateListingActionsResponse =
   Schemas["CreateListingActionsResponse"]
+export type CreateCancelOrderActionsRequest =
+  Schemas["CancelOrderActionsRequest"]
+export type CreateCancelOrderActionsResponse =
+  Schemas["CancelOrderActionsResponse"]
+export type CreateListingFulfillmentActionsRequest =
+  Schemas["FullfillListingRequest"]
+export type CreateListingFulfillmentActionsResponse =
+  Schemas["FulfillmentActionsResponse"]
+export type CreateOfferActionsRequest = Schemas["CreateOfferActionsRequest"]
+export type CreateOfferActionsResponse = Schemas["CreateOfferActionsResponse"]
+export type CreateOfferFulfillmentActionsRequest =
+  Schemas["FullfillmentDataRequest"]
+export type CreateOfferFulfillmentActionsResponse =
+  Schemas["FulfillmentActionsResponse"]
 export type TransferRequest = Schemas["TransferRequest"]
 export type TransferResponse = Schemas["TransferResponse"]
 export type CollectionOfferAggregatesPaginatedResponse =

@@ -26,8 +26,16 @@ import type {
   CollectionPaginatedResponse,
   CollectionStats,
   Contract,
+  CreateCancelOrderActionsRequest,
+  CreateCancelOrderActionsResponse,
   CreateListingActionsRequest,
   CreateListingActionsResponse,
+  CreateListingFulfillmentActionsRequest,
+  CreateListingFulfillmentActionsResponse,
+  CreateOfferActionsRequest,
+  CreateOfferActionsResponse,
+  CreateOfferFulfillmentActionsRequest,
+  CreateOfferFulfillmentActionsResponse,
   CrossChainDropMintRequest,
   CrossChainDropMintResponse,
   CrossChainFulfillmentResponse,
@@ -139,6 +147,7 @@ export class OpenSeaCLI {
   readonly nfts: NFTsAPI
   readonly listings: ListingsAPI
   readonly offers: OffersAPI
+  readonly orders: OrdersAPI
   readonly events: EventsAPI
   readonly accounts: AccountsAPI
   readonly agent: AgentAPI
@@ -158,6 +167,7 @@ export class OpenSeaCLI {
     this.nfts = new NFTsAPI(this.client)
     this.listings = new ListingsAPI(this.client)
     this.offers = new OffersAPI(this.client)
+    this.orders = new OrdersAPI(this.client)
     this.events = new EventsAPI(this.client)
     this.accounts = new AccountsAPI(this.client)
     this.agent = new AgentAPI(this.client)
@@ -546,6 +556,12 @@ class ListingsAPI {
   ): Promise<CreateListingActionsResponse> {
     return this.client.post("/api/v2/listings/actions", request)
   }
+
+  async fulfillmentActions(
+    request: CreateListingFulfillmentActionsRequest,
+  ): Promise<CreateListingFulfillmentActionsResponse> {
+    return this.client.post("/api/v2/listings/fulfillment/actions", request)
+  }
 }
 
 class OffersAPI {
@@ -606,6 +622,34 @@ class OffersAPI {
         limit: options.limit,
         next: options.next,
       },
+    )
+  }
+
+  async actions(
+    request: CreateOfferActionsRequest,
+  ): Promise<CreateOfferActionsResponse> {
+    return this.client.post("/api/v2/offers/actions", request)
+  }
+
+  async fulfillmentActions(
+    request: CreateOfferFulfillmentActionsRequest,
+  ): Promise<CreateOfferFulfillmentActionsResponse> {
+    return this.client.post("/api/v2/offers/fulfillment/actions", request)
+  }
+}
+
+class OrdersAPI {
+  constructor(private client: OpenSeaClient) {}
+
+  async cancelActions(
+    chain: string,
+    protocolAddress: string,
+    orderIdentifier: string,
+    request: CreateCancelOrderActionsRequest,
+  ): Promise<CreateCancelOrderActionsResponse> {
+    return this.client.post(
+      `/api/v2/orders/chain/${chain}/protocol/${protocolAddress}/${orderIdentifier}/cancel/actions`,
+      request,
     )
   }
 }

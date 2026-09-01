@@ -23,10 +23,11 @@ describe("ordersCommand", () => {
     vi.restoreAllMocks()
   })
 
-  it("creates command with cancel subcommand", () => {
+  it("creates command with cancellation subcommands", () => {
     const cmd = ordersCommand(ctx.getClient, ctx.getFormat)
     expect(cmd.name()).toBe("orders")
     expect(cmd.commands.map(c => c.name())).toContain("cancel")
+    expect(cmd.commands.map(c => c.name())).toContain("cancel-actions")
   })
 
   it("cancel posts to the cancel endpoint without a body by default", async () => {
@@ -60,6 +61,34 @@ describe("ordersCommand", () => {
 
     expect(ctx.mockClient.post).toHaveBeenCalledWith(
       "/api/v2/orders/chain/ethereum/protocol/0xproto/0xhash/cancel",
+      body,
+    )
+  })
+
+  it("cancel-actions posts the maker body to the action endpoint", async () => {
+    ctx.mockClient.post.mockResolvedValue({ steps: [] })
+    const body = { address: "MakerBase58Address" }
+    const file = writeTempJson(body)
+
+    const cmd = ordersCommand(ctx.getClient, ctx.getFormat)
+    try {
+      await cmd.parseAsync(
+        [
+          "cancel-actions",
+          "solana",
+          "AuctionHouseBase58Address",
+          "solana-order-id",
+          "--body",
+          file,
+        ],
+        { from: "user" },
+      )
+    } finally {
+      rmSync(file, { force: true })
+    }
+
+    expect(ctx.mockClient.post).toHaveBeenCalledWith(
+      "/api/v2/orders/chain/solana/protocol/AuctionHouseBase58Address/solana-order-id/cancel/actions",
       body,
     )
   })

@@ -1,5 +1,16 @@
 # @opensea/cli
 
+## 2.2.0
+
+### Minor Changes
+
+- b68b01e: Add typed order-action APIs for creating offers, fulfilling listings and offers, and cancelling orders across EVM chains and Solana.
+
+### Patch Changes
+
+- Updated dependencies [b68b01e]
+  - @opensea/sdk@12.1.0
+
 ## 2.1.0
 
 ### Minor Changes

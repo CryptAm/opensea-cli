@@ -3,7 +3,11 @@ import type { OpenSeaClient } from "../client.js"
 import type { OutputFormat } from "../output.js"
 import { formatOutput } from "../output.js"
 import { readJsonBodyOption } from "../parse.js"
-import type { CancelRequest } from "../types/index.js"
+import type {
+  CancelRequest,
+  CreateCancelOrderActionsRequest,
+  CreateCancelOrderActionsResponse,
+} from "../types/index.js"
 
 export function ordersCommand(
   getClient: () => OpenSeaClient,
@@ -36,6 +40,36 @@ export function ordersCommand(
           : undefined
         const result = await client.post(
           `/api/v2/orders/chain/${chain}/protocol/${protocolAddress}/${orderHash}/cancel`,
+          body,
+        )
+        console.log(formatOutput(result, getFormat()))
+      },
+    )
+
+  cmd
+    .command("cancel-actions")
+    .description("Get ordered actions needed to cancel an order onchain")
+    .argument("<chain>", "Chain the order lives on (e.g. ethereum, solana)")
+    .argument("<protocol_address>", "Order protocol address")
+    .argument("<order_identifier>", "Order hash or SVM order identifier")
+    .requiredOption(
+      "--body <path>",
+      "Path to JSON file with the CancelOrderActionsRequest body",
+    )
+    .action(
+      async (
+        chain: string,
+        protocolAddress: string,
+        orderIdentifier: string,
+        options: { body: string },
+      ) => {
+        const client = getClient()
+        const body = readJsonBodyOption<CreateCancelOrderActionsRequest>(
+          options.body,
+          "--body",
+        )
+        const result = await client.post<CreateCancelOrderActionsResponse>(
+          `/api/v2/orders/chain/${chain}/protocol/${protocolAddress}/${orderIdentifier}/cancel/actions`,
           body,
         )
         console.log(formatOutput(result, getFormat()))

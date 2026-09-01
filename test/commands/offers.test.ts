@@ -1,6 +1,16 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { offersCommand } from "../../src/commands/offers.js"
 import { type CommandTestContext, createCommandTestContext } from "../mocks.js"
+
+function writeTempJson(data: unknown): string {
+  const dir = mkdtempSync(join(tmpdir(), "cli-test-"))
+  const file = join(dir, "body.json")
+  writeFileSync(file, JSON.stringify(data))
+  return file
+}
 
 describe("offersCommand", () => {
   let ctx: CommandTestContext
@@ -21,6 +31,8 @@ describe("offersCommand", () => {
     expect(subcommands).toContain("collection")
     expect(subcommands).toContain("best-for-nft")
     expect(subcommands).toContain("traits")
+    expect(subcommands).toContain("actions")
+    expect(subcommands).toContain("fulfillment-actions")
   })
 
   it("all subcommand fetches all offers", async () => {
@@ -87,6 +99,64 @@ describe("offersCommand", () => {
         value: "Blue",
         limit: 5,
       }),
+    )
+  })
+
+  it("actions posts the request body without normalizing Solana values", async () => {
+    ctx.mockClient.post.mockResolvedValue({ steps: [] })
+    const body = {
+      item: {
+        chain: "solana",
+        contract: "MintBase58Address",
+        token_id: "TokenBase58Address",
+      },
+      address: "MakerBase58Address",
+      quantity: 1,
+      price: {
+        amount: "1.5",
+        currency: "So11111111111111111111111111111111111111112",
+      },
+    }
+    const file = writeTempJson(body)
+
+    const cmd = offersCommand(ctx.getClient, ctx.getFormat)
+    try {
+      await cmd.parseAsync(["actions", "--body", file], { from: "user" })
+    } finally {
+      rmSync(file, { force: true })
+    }
+
+    expect(ctx.mockClient.post).toHaveBeenCalledWith(
+      "/api/v2/offers/actions",
+      body,
+    )
+  })
+
+  it("fulfillment-actions posts the request body", async () => {
+    ctx.mockClient.post.mockResolvedValue({ steps: [] })
+    const body = {
+      offer: {
+        hash: "solana-offer-id",
+        chain: "solana",
+        protocol_address: "AuctionHouseBase58Address",
+      },
+      fulfiller: { address: "SellerBase58Address" },
+      include_optional_creator_fees: false,
+    }
+    const file = writeTempJson(body)
+
+    const cmd = offersCommand(ctx.getClient, ctx.getFormat)
+    try {
+      await cmd.parseAsync(["fulfillment-actions", "--body", file], {
+        from: "user",
+      })
+    } finally {
+      rmSync(file, { force: true })
+    }
+
+    expect(ctx.mockClient.post).toHaveBeenCalledWith(
+      "/api/v2/offers/fulfillment/actions",
+      body,
     )
   })
 })

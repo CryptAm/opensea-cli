@@ -75,6 +75,8 @@ opensea nfts contract <chain> <address>
 opensea listings all <collection> [--limit <n>] [--next <cursor>]
 opensea listings best <collection> [--limit <n>] [--next <cursor>]
 opensea listings best-for-nft <collection> <token-id>
+opensea listings actions --body <request.json>
+opensea listings fulfillment-actions --body <request.json>
 ```
 
 ## Offers
@@ -84,7 +86,18 @@ opensea offers all <collection> [--limit <n>] [--next <cursor>]
 opensea offers collection <collection> [--limit <n>] [--next <cursor>]
 opensea offers best-for-nft <collection> <token-id>
 opensea offers traits <collection> --type <type> --value <value> [--limit <n>] [--next <cursor>]
+opensea offers actions --body <request.json>
+opensea offers fulfillment-actions --body <request.json>
 ```
+
+## Orders
+
+```bash
+opensea orders cancel <chain> <protocol_address> <order_hash> [--body <request.json>]
+opensea orders cancel-actions <chain> <protocol_address> <order_identifier> --body <request.json>
+```
+
+The action commands work across EVM chains and Solana. For Solana, preserve base58 address casing, use `svm_order.id` as the order identifier, and pass through the order's returned protocol address.
 
 ## Drops
 

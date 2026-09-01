@@ -1,6 +1,16 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { listingsCommand } from "../../src/commands/listings.js"
 import { type CommandTestContext, createCommandTestContext } from "../mocks.js"
+
+function writeTempJson(data: unknown): string {
+  const dir = mkdtempSync(join(tmpdir(), "cli-test-"))
+  const file = join(dir, "body.json")
+  writeFileSync(file, JSON.stringify(data))
+  return file
+}
 
 describe("listingsCommand", () => {
   let ctx: CommandTestContext
@@ -21,6 +31,8 @@ describe("listingsCommand", () => {
     expect(subcommands).toContain("best")
     expect(subcommands).toContain("best-for-nft")
     expect(subcommands).toContain("cross-chain-fulfill")
+    expect(subcommands).toContain("actions")
+    expect(subcommands).toContain("fulfillment-actions")
   })
 
   it("all subcommand fetches all listings", async () => {
@@ -170,6 +182,34 @@ describe("listingsCommand", () => {
       expect.objectContaining({
         recipient: "0xrecipient",
       }),
+    )
+  })
+
+  it("fulfillment-actions posts the request body", async () => {
+    ctx.mockClient.post.mockResolvedValue({ steps: [] })
+    const body = {
+      listing: {
+        hash: "solana-listing-id",
+        chain: "solana",
+        protocol_address: "AuctionHouseBase58Address",
+      },
+      fulfiller: { address: "BuyerBase58Address" },
+      include_optional_creator_fees: false,
+    }
+    const file = writeTempJson(body)
+
+    const cmd = listingsCommand(ctx.getClient, ctx.getFormat)
+    try {
+      await cmd.parseAsync(["fulfillment-actions", "--body", file], {
+        from: "user",
+      })
+    } finally {
+      rmSync(file, { force: true })
+    }
+
+    expect(ctx.mockClient.post).toHaveBeenCalledWith(
+      "/api/v2/listings/fulfillment/actions",
+      body,
     )
   })
 })

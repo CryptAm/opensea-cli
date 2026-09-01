@@ -109,8 +109,9 @@ opensea --format table collections stats mfers
 |---|---|
 | `collections` | Get, list, stats, and traits for NFT collections |
 | `nfts` | Get, list, refresh metadata, and contract details for NFTs |
-| `listings` | Get all, best, or best-for-nft listings |
-| `offers` | Get all, collection, best-for-nft, and trait offers |
+| `listings` | Query listings and create listing or fulfillment actions |
+| `offers` | Query offers and create offer or fulfillment actions |
+| `orders` | Cancel orders offchain or create onchain cancellation actions |
 | `drops` | Query drops and build same-chain or cross-chain mint transactions |
 | `transactions` | Poll transaction and cross-chain receipt status |
 | `events` | List marketplace events (sales, transfers, mints, etc.) |
@@ -136,6 +137,15 @@ const client = new OpenSeaCLI({ apiKey: process.env.OPENSEA_API_KEY })
 const collection = await client.collections.get("mfers")
 const { nfts } = await client.nfts.listByCollection("mfers", { limit: 5 })
 const { listings } = await client.listings.best("mfers", { limit: 10 })
+const fulfillment = await client.listings.fulfillmentActions({
+  listing: {
+    hash: "<svm_order.id>",
+    chain: "solana",
+    protocol_address: "<protocol address>",
+  },
+  fulfiller: { address: "<buyer address>" },
+  include_optional_creator_fees: false,
+})
 const { asset_events } = await client.events.byCollection("mfers", {
   eventType: "sale",
 })
@@ -232,6 +242,10 @@ npm run type-check      # TypeScript type checking
 ## Contributing
 
 Issues and bug reports are the best way to contribute, and the mirror notice at the top of this page covers what happens to a pull request. See [CONTRIBUTING.md](./CONTRIBUTING.md) for details.
+
+## Security
+
+Found a vulnerability? Report it through OpenSea's Bugcrowd program at https://bugcrowd.com/engagements/opensea rather than opening a public issue. See [SECURITY.md](SECURITY.md).
 
 ## License
 

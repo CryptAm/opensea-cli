@@ -12,6 +12,8 @@ import {
 import type {
   CreateListingActionsRequest,
   CreateListingActionsResponse,
+  CreateListingFulfillmentActionsRequest,
+  CreateListingFulfillmentActionsResponse,
   CrossChainFulfillmentResponse,
 } from "../types/index.js"
 
@@ -220,6 +222,27 @@ export function listingsCommand(
       )
       const result = await client.post<CreateListingActionsResponse>(
         "/api/v2/listings/actions",
+        request,
+      )
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
+    .command("fulfillment-actions")
+    .description("Get ordered actions needed to fulfill a listing")
+    .requiredOption(
+      "--body <path>",
+      "Path to JSON file with the listing fulfillment request body",
+    )
+    .action(async (options: { body: string }) => {
+      const client = getClient()
+      const request =
+        readJsonBodyOption<CreateListingFulfillmentActionsRequest>(
+          options.body,
+          "--body",
+        )
+      const result = await client.post<CreateListingFulfillmentActionsResponse>(
+        "/api/v2/listings/fulfillment/actions",
         request,
       )
       console.log(formatOutput(result, getFormat()))

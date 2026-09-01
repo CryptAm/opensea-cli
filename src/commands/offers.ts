@@ -1,8 +1,18 @@
 import { Command } from "commander"
 import type { OpenSeaClient } from "../client.js"
 import type { OutputFormat } from "../output.js"
-import { outputGet } from "../output.js"
-import { addPaginationOptions, parseIntOption } from "../parse.js"
+import { formatOutput, outputGet } from "../output.js"
+import {
+  addPaginationOptions,
+  parseIntOption,
+  readJsonBodyOption,
+} from "../parse.js"
+import type {
+  CreateOfferActionsRequest,
+  CreateOfferActionsResponse,
+  CreateOfferFulfillmentActionsRequest,
+  CreateOfferFulfillmentActionsResponse,
+} from "../types/index.js"
 
 export function offersCommand(
   getClient: () => OpenSeaClient,
@@ -126,6 +136,46 @@ export function offersCommand(
       )
     },
   )
+
+  cmd
+    .command("actions")
+    .description("Get ordered actions needed to create an offer")
+    .requiredOption(
+      "--body <path>",
+      "Path to JSON file with the CreateOfferActionsRequest body",
+    )
+    .action(async (options: { body: string }) => {
+      const client = getClient()
+      const request = readJsonBodyOption<CreateOfferActionsRequest>(
+        options.body,
+        "--body",
+      )
+      const result = await client.post<CreateOfferActionsResponse>(
+        "/api/v2/offers/actions",
+        request,
+      )
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
+    .command("fulfillment-actions")
+    .description("Get ordered actions needed to fulfill an offer")
+    .requiredOption(
+      "--body <path>",
+      "Path to JSON file with the offer fulfillment request body",
+    )
+    .action(async (options: { body: string }) => {
+      const client = getClient()
+      const request = readJsonBodyOption<CreateOfferFulfillmentActionsRequest>(
+        options.body,
+        "--body",
+      )
+      const result = await client.post<CreateOfferFulfillmentActionsResponse>(
+        "/api/v2/offers/fulfillment/actions",
+        request,
+      )
+      console.log(formatOutput(result, getFormat()))
+    })
 
   return cmd
 }

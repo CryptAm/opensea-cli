@@ -43,6 +43,7 @@ describe("OpenSeaCLI", () => {
       expect(sdk.nfts).toBeDefined()
       expect(sdk.listings).toBeDefined()
       expect(sdk.offers).toBeDefined()
+      expect(sdk.orders).toBeDefined()
       expect(sdk.events).toBeDefined()
       expect(sdk.accounts).toBeDefined()
       expect(sdk.agent).toBeDefined()
@@ -291,6 +292,26 @@ describe("OpenSeaCLI", () => {
         "/api/v2/listings/collection/slug/nfts/123/best",
       )
     })
+
+    it("fulfillmentActions calls the listing action endpoint", async () => {
+      mockPost.mockResolvedValue({ steps: [] })
+      const request = {
+        listing: {
+          hash: "solana-listing-id",
+          chain: "solana",
+          protocol_address: "AuctionHouseBase58Address",
+        },
+        fulfiller: { address: "BuyerBase58Address" },
+        include_optional_creator_fees: false,
+      }
+
+      await sdk.listings.fulfillmentActions(request)
+
+      expect(mockPost).toHaveBeenCalledWith(
+        "/api/v2/listings/fulfillment/actions",
+        request,
+      )
+    })
   })
 
   describe("offers", () => {
@@ -330,6 +351,66 @@ describe("OpenSeaCLI", () => {
       expect(mockGet).toHaveBeenCalledWith(
         "/api/v2/offers/collection/slug/traits",
         { type: "Background", value: "Blue", limit: 10, next: undefined },
+      )
+    })
+
+    it("actions calls the offer action endpoint", async () => {
+      mockPost.mockResolvedValue({ steps: [] })
+      const request = {
+        item: {
+          chain: "solana",
+          contract: "MintBase58Address",
+          token_id: "TokenBase58Address",
+        },
+        address: "MakerBase58Address",
+        quantity: 1,
+        price: {
+          amount: "1.5",
+          currency: "So11111111111111111111111111111111111111112",
+        },
+      }
+
+      await sdk.offers.actions(request)
+
+      expect(mockPost).toHaveBeenCalledWith("/api/v2/offers/actions", request)
+    })
+
+    it("fulfillmentActions calls the offer action endpoint", async () => {
+      mockPost.mockResolvedValue({ steps: [] })
+      const request = {
+        offer: {
+          hash: "solana-offer-id",
+          chain: "solana",
+          protocol_address: "AuctionHouseBase58Address",
+        },
+        fulfiller: { address: "SellerBase58Address" },
+        include_optional_creator_fees: false,
+      }
+
+      await sdk.offers.fulfillmentActions(request)
+
+      expect(mockPost).toHaveBeenCalledWith(
+        "/api/v2/offers/fulfillment/actions",
+        request,
+      )
+    })
+  })
+
+  describe("orders", () => {
+    it("cancelActions calls the order cancellation action endpoint", async () => {
+      mockPost.mockResolvedValue({ steps: [] })
+      const request = { address: "MakerBase58Address" }
+
+      await sdk.orders.cancelActions(
+        "solana",
+        "AuctionHouseBase58Address",
+        "solana-order-id",
+        request,
+      )
+
+      expect(mockPost).toHaveBeenCalledWith(
+        "/api/v2/orders/chain/solana/protocol/AuctionHouseBase58Address/solana-order-id/cancel/actions",
+        request,
       )
     })
   })
