@@ -338,6 +338,8 @@ export type SetCollectionVisibilityRequest =
 
 export type RegisteredToolResponse = Schemas["RegisteredToolResponse"]
 export type ToolSearchPaginatedResponse = Schemas["ToolSearchPaginatedResponse"]
+export type ToolUsageRequest = Schemas["ToolUsageRequest"]
+export type ToolUsageResponse = Schemas["ToolUsageResponse"]
 export type ToolListPaginatedResponse = Schemas["ToolListPaginatedResponse"]
 export type ToolActivityPaginatedResponse =
   Schemas["ToolActivityPaginatedResponse"]

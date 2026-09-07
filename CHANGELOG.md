@@ -1,5 +1,17 @@
 # @opensea/cli
 
+## 2.3.0
+
+### Minor Changes
+
+- 3075f59: Add `tools.reportUsage()` for `POST /api/v2/tools/usage`, the one `/api/v2/tools` operation the client did not cover. Metrics only: the response reports whether the usage record was verified.
+
+### Patch Changes
+
+- Updated dependencies [d9df0e2]
+- Updated dependencies [3075f59]
+  - @opensea/sdk@12.3.0
+
 ## 2.2.0
 
 ### Minor Changes

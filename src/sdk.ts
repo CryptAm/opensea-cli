@@ -84,6 +84,8 @@ import type {
   ToolActivityPaginatedResponse,
   ToolListPaginatedResponse,
   ToolSearchPaginatedResponse,
+  ToolUsageRequest,
+  ToolUsageResponse,
   TraitFilter,
   TransactionReceiptRequest,
   TransactionReceiptResponse,
@@ -1383,6 +1385,14 @@ class ToolsAPI {
       limit: options?.limit,
       cursor: options?.next,
     })
+  }
+
+  /**
+   * Report a tool invocation. Metrics only: the response says whether the report was verified,
+   * and nothing about the tool call itself depends on it.
+   */
+  async reportUsage(usage: ToolUsageRequest): Promise<ToolUsageResponse> {
+    return this.client.post<ToolUsageResponse>("/api/v2/tools/usage", usage)
   }
 
   async activity(
