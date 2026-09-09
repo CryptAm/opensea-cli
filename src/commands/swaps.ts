@@ -8,7 +8,9 @@ import type { WalletProvider } from "../wallet/index.js"
 import {
   createWalletForProvider,
   createWalletFromEnv,
+  isEvmAdapter,
   WALLET_PROVIDERS,
+  WrongChainTypeError,
 } from "../wallet/index.js"
 
 export function swapsCommand(
@@ -128,6 +130,14 @@ export function swapsCommand(
         const wallet = options.walletProvider
           ? createWalletForProvider(options.walletProvider as WalletProvider)
           : createWalletFromEnv()
+        // Swap execution builds EVM transactions, so a Solana wallet cannot run it yet. The
+        // factory returns whatever is configured, so this is where the mismatch surfaces.
+        if (!isEvmAdapter(wallet)) {
+          console.error(
+            `Error: ${new WrongChainTypeError(wallet, "evm", "swap execution").message}`,
+          )
+          process.exit(1)
+        }
         const address = await wallet.getAddress()
         console.error(`Using ${wallet.name} wallet: ${address}`)
 

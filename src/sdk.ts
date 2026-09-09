@@ -96,7 +96,7 @@ import type {
   WalletVisibilityResponse,
 } from "./types/index.js"
 import type { TransactionResult, WalletAdapter } from "./wallet/index.js"
-import { resolveChainId } from "./wallet/index.js"
+import { requireEvmAdapter, resolveChainId } from "./wallet/index.js"
 
 function encodeTraits(traits?: TraitFilter[]): string | undefined {
   if (!traits || traits.length === 0) return undefined
@@ -1248,6 +1248,10 @@ export class SwapsAPI {
       recipient?: string
       address?: string
     },
+    // The union, not `EvmWalletAdapter`: `createWalletFromEnv()` returns `WalletAdapter`, so
+    // narrowing this parameter would stop `execute(opts, createWalletFromEnv())` compiling and
+    // force every caller to narrow first. The method builds `to`/`data`/`value`/`chainId`
+    // transactions and so needs an EVM wallet, which it checks below instead.
     wallet: WalletAdapter,
     callbacks?: {
       onQuote?: (quote: SwapQuoteResponse) => void
@@ -1255,7 +1259,11 @@ export class SwapsAPI {
       onSkipped?: (tx: { chain: string; reason: string }) => void
     },
   ): Promise<TransactionResult[]> {
-    const address = options.address ?? (await wallet.getAddress())
+    // Rejects a Solana wallet here rather than failing later on a missing `sendTransaction`,
+    // and before the quote request. Matches how the x402 scheme guards its own boundary.
+    const evmWallet = requireEvmAdapter(wallet, "swap execution")
+
+    const address = options.address ?? (await evmWallet.getAddress())
     const quote = await this.quote({ ...options, address })
 
     callbacks?.onQuote?.(quote)
@@ -1278,7 +1286,7 @@ export class SwapsAPI {
       }
       const chainId = resolveChainId(tx.chain)
       callbacks?.onSending?.({ to: tx.to, chain: tx.chain, chainId })
-      const result = await wallet.sendTransaction({
+      const result = await evmWallet.sendTransaction({
         to: tx.to,
         data: tx.data,
         value: tx.value ?? "0",

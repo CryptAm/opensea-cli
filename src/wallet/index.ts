@@ -1,13 +1,22 @@
 export type {
   BankrConfig,
+  BaseWalletAdapter,
+  ChainType,
+  EvmTransactionRequest,
+  EvmWalletAdapter,
   SignMessageRequest,
   SignTypedDataRequest,
+  SvmSignedTransaction,
+  SvmTransactionRequest,
+  SvmWalletAdapter,
+  SvmWalletCapabilities,
   TransactionRequest,
   TransactionResult,
   WalletAdapter,
   WalletCapabilities,
   WalletInfo,
   WalletProvider,
+  WalletSelector,
 } from "@opensea/wallet-adapters"
 export {
   BankrAdapter,
@@ -15,9 +24,14 @@ export {
   createWalletForProvider,
   createWalletFromEnv,
   FireblocksAdapter,
+  isEvmAdapter,
+  isSvmAdapter,
   PrivateKeyAdapter,
   PrivyAdapter,
+  PrivySvmAdapter,
+  requireEvmAdapter,
   TurnkeyAdapter,
   WALLET_PROVIDERS,
+  WrongChainTypeError,
 } from "@opensea/wallet-adapters"
 export { CHAIN_IDS, resolveChainId } from "./chains.js"

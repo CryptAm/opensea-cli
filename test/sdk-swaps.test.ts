@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { OpenSeaClient } from "../src/client.js"
 import { OpenSeaCLI } from "../src/sdk.js"
-import type { WalletAdapter } from "../src/wallet/index.js"
+import type {
+  EvmWalletAdapter,
+  SvmWalletAdapter,
+  WalletAdapter,
+} from "../src/wallet/index.js"
+import { WrongChainTypeError } from "../src/wallet/index.js"
 
 vi.mock("../src/client.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../src/client.js")>()
@@ -18,9 +23,10 @@ vi.mock("../src/client.js", async importOriginal => {
 
 function createMockWallet(
   address = "0x1234567890abcdef1234567890abcdef12345678",
-): WalletAdapter & { sendTransaction: ReturnType<typeof vi.fn> } {
+): EvmWalletAdapter & { sendTransaction: ReturnType<typeof vi.fn> } {
   return {
     name: "mock",
+    chainType: "evm",
     // Required by WalletAdapter. This fake never exercises the optional signing
     // methods, so every capability is declared false.
     capabilities: {
@@ -273,5 +279,83 @@ describe("SwapsAPI.execute", () => {
       "/api/v2/swap/quote",
       expect.objectContaining({ address: "0xWalletAddress" }),
     )
+  })
+
+  it("accepts a WalletAdapter-typed wallet, as createWalletFromEnv returns", async () => {
+    // `createWalletFromEnv()` is typed `WalletAdapter`, so this is the documented happy path.
+    // Narrowing `execute` to `EvmWalletAdapter` stopped it compiling, a breaking change no test
+    // caught. Passing the union through the published signature pins that it still works.
+    //
+    // It has to arrive as a function's return type, not `const wallet: WalletAdapter = ...`:
+    // control-flow analysis narrows an annotated const straight back to its initializer's type,
+    // so that form still compiles against a narrowed parameter and guards nothing. Verified by
+    // re-narrowing the signature and watching this line fail to error.
+    const fromEnv = (): WalletAdapter => createMockWallet("0xUnionTyped")
+    const wallet = fromEnv()
+
+    mockGet.mockResolvedValue({
+      transactions: [
+        { to: "0xRouter", data: "0x", value: "0", chain: "ethereum" },
+      ],
+    })
+
+    const results = await sdk.swaps.execute(
+      {
+        fromChain: "ethereum",
+        fromAddress: "0xTokenA",
+        toChain: "ethereum",
+        toAddress: "0xTokenB",
+        quantity: "1000000",
+      },
+      wallet,
+    )
+
+    expect(results).toHaveLength(1)
+  })
+
+  it("rejects an SVM wallet before requesting a quote", async () => {
+    // `execute` takes the union, which is what `createWalletFromEnv()` returns, so this is a
+    // caller that compiles cleanly and is rejected at runtime. The CLI command has its own guard
+    // for the same case; this one covers the library entry point.
+    const svm: SvmWalletAdapter = {
+      name: "svm-mock",
+      chainType: "svm",
+      capabilities: {
+        signMessage: true,
+        signTypedData: false,
+        managedGas: false,
+        managedNonce: false,
+      },
+      getAddress: vi
+        .fn()
+        .mockResolvedValue("So11111111111111111111111111111111111111112"),
+      signTransaction: vi.fn().mockResolvedValue({ signedTransaction: "" }),
+    }
+
+    mockGet.mockResolvedValue({
+      transactions: [
+        { to: "0xRouter", data: "0x", value: "0", chain: "ethereum" },
+      ],
+    })
+
+    const call = sdk.swaps.execute(
+      {
+        fromChain: "ethereum",
+        fromAddress: "0xTokenA",
+        toChain: "ethereum",
+        toAddress: "0xTokenB",
+        quantity: "1000000",
+      },
+      svm,
+    )
+
+    await expect(call).rejects.toThrow(WrongChainTypeError)
+    await expect(call).rejects.toThrow(
+      'wallet "svm-mock" signs for svm; swap execution requires an EVM wallet',
+    )
+    // The guard runs first, so no quote is fetched and getAddress is never reached. Without it the
+    // failure surfaces later as a missing sendTransaction, after a network round trip.
+    expect(mockGet).not.toHaveBeenCalled()
+    expect(svm.getAddress).not.toHaveBeenCalled()
   })
 })
