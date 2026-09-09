@@ -1,5 +1,16 @@
 # @opensea/cli
 
+## 2.4.1
+
+### Patch Changes
+
+- Updated dependencies [3bca418]
+- Updated dependencies [0dddb2e]
+- Updated dependencies [4c8b9ab]
+  - @opensea/api-types@0.10.0
+  - @opensea/wallet-adapters@1.2.0
+  - @opensea/sdk@12.5.0
+
 ## 2.4.0
 
 ### Minor Changes
