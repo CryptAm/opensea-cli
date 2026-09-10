@@ -3,8 +3,15 @@ import type { OpenSeaClientConfig } from "./types/index.js"
 declare const __VERSION__: string
 
 const DEFAULT_BASE_URL = "https://api.opensea.io"
-const DEFAULT_TIMEOUT_MS = 30_000
-const USER_AGENT = `opensea-cli/${__VERSION__}`
+export const DEFAULT_TIMEOUT_MS = 30_000
+
+/**
+ * How this CLI identifies itself to the API. Exported because
+ * `opensea auth request-key` cannot go through this client: that endpoint is
+ * unauthenticated and `getClient()` exits when no API key is set, so it issues
+ * its own request and needs the same identity string.
+ */
+export const USER_AGENT = `opensea-cli/${__VERSION__}`
 const DEFAULT_MAX_RETRIES = 0
 const DEFAULT_RETRY_BASE_DELAY_MS = 1_000
 

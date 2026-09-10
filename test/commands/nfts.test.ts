@@ -79,6 +79,41 @@ describe("nftsCommand", () => {
     )
   })
 
+  it("list-by-account sends include_auto_hidden only with the flag", async () => {
+    ctx.mockClient.get.mockResolvedValue({ nfts: [] })
+
+    const cmd = nftsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(
+      ["list-by-account", "ethereum", "0xabc", "--include-auto-hidden"],
+      { from: "user" },
+    )
+
+    // Pinned as the whole params object, so the snake_case wire name is the
+    // only spelling that can satisfy it.
+    expect(ctx.mockClient.get).toHaveBeenCalledWith(
+      "/api/v2/chain/ethereum/account/0xabc/nfts",
+      { limit: 20, next: undefined, include_auto_hidden: true },
+    )
+  })
+
+  it("list-by-account omits include_auto_hidden without the flag", async () => {
+    ctx.mockClient.get.mockResolvedValue({ nfts: [] })
+
+    const cmd = nftsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(["list-by-account", "ethereum", "0xabc"], {
+      from: "user",
+    })
+
+    const params = ctx.mockClient.get.mock.calls[0][1] as Record<
+      string,
+      unknown
+    >
+    // `toEqual` treats an undefined-valued key as absent, so read the value
+    // directly rather than matching the object shape.
+    expect(params.include_auto_hidden).toBeUndefined()
+    expect(params.limit).toBe(20)
+  })
+
   it("refresh subcommand calls post", async () => {
     ctx.mockClient.post.mockResolvedValue(undefined)
 

@@ -230,6 +230,17 @@ describe("OpenSeaCLI", () => {
       )
     })
 
+    it("listByAccount sends includeAutoHidden as include_auto_hidden", async () => {
+      mockGet.mockResolvedValue({ nfts: [] })
+      await sdk.nfts.listByAccount("ethereum", "0xabc", {
+        includeAutoHidden: true,
+      })
+      expect(mockGet).toHaveBeenCalledWith(
+        "/api/v2/chain/ethereum/account/0xabc/nfts",
+        { limit: undefined, next: undefined, include_auto_hidden: true },
+      )
+    })
+
     it("refresh calls correct endpoint with POST", async () => {
       mockPost.mockResolvedValue(undefined)
       await sdk.nfts.refresh("ethereum", "0xabc", "1")

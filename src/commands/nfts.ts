@@ -89,24 +89,36 @@ export function nftsCommand(
       .description("List NFTs owned by an account")
       .argument("<chain>", "Chain")
       .argument("<address>", "Account address"),
-  ).action(
-    async (
-      chain: string,
-      address: string,
-      options: { limit: string; next?: string },
-    ) => {
-      const client = getClient()
-      await outputGet(
-        client,
-        getFormat(),
-        `/api/v2/chain/${chain}/account/${address}/nfts`,
-        {
-          limit: parseIntOption(options.limit, "--limit"),
-          next: options.next,
-        },
-      )
-    },
   )
+    .option(
+      "--include-auto-hidden",
+      "Also return NFTs hidden automatically because a third party minted or sent them to this account. NFTs the holder hid themselves stay hidden, and NFTs removed for policy violations are not returned.",
+    )
+    .action(
+      async (
+        chain: string,
+        address: string,
+        options: {
+          limit: string
+          next?: string
+          includeAutoHidden?: boolean
+        },
+      ) => {
+        const client = getClient()
+        await outputGet(
+          client,
+          getFormat(),
+          `/api/v2/chain/${chain}/account/${address}/nfts`,
+          {
+            limit: parseIntOption(options.limit, "--limit"),
+            next: options.next,
+            // The CLI client sends param keys verbatim, so this is the wire
+            // name. Undefined when the flag is absent, and dropped there.
+            include_auto_hidden: options.includeAutoHidden,
+          },
+        )
+      },
+    )
 
   cmd
     .command("refresh")

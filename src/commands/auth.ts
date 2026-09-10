@@ -27,6 +27,7 @@ import {
   saveToken,
 } from "../auth/store.js"
 import type { OpenSeaClient } from "../client.js"
+import { DEFAULT_TIMEOUT_MS, USER_AGENT } from "../client.js"
 import type { OutputFormat } from "../output.js"
 import { formatOutput } from "../output.js"
 import type { WalletUnlinkResponse } from "../types/index.js"
@@ -44,21 +45,45 @@ export function authCommand(
   getFormat: () => OutputFormat,
   getAuthBaseUrl?: () => string | undefined,
   getClient?: () => OpenSeaClient,
+  getRequestOptions?: () => { timeout?: number; verbose?: boolean },
 ): Command {
   const cmd = new Command("auth").description(
     "Authentication and token management",
   )
 
   // --- request-key (existing) ---
+  //
+  // This is the one command that issues its own request instead of going
+  // through OpenSeaClient. The endpoint is unauthenticated, which is the whole
+  // point of it, and `getClient()` exits when no API key is set, so the client
+  // is unusable here by construction.
+  //
+  // It deliberately does not call `OpenSeaAPI.requestInstantApiKey` from
+  // @opensea/sdk either. That helper camelizes its response, and every other
+  // command in this CLI prints the raw snake_case wire body, so routing this
+  // one through it would rename `api_key` to `apiKey` for scripts and make
+  // this the only camelCase command. It also hardcodes `x-app-id: opensea-js`,
+  // which would attribute CLI traffic to the SDK.
   cmd
     .command("request-key")
     .description("Request a free-tier API key (keys expire after 7 days)")
     .action(async () => {
       const baseUrl = getBaseUrl() ?? DEFAULT_BASE_URL
-      const response = await fetch(`${baseUrl}/api/v2/auth/keys`, {
+      const { timeout, verbose } = getRequestOptions?.() ?? {}
+      const url = `${baseUrl}/api/v2/auth/keys`
+
+      if (verbose) {
+        console.error(`[verbose] POST ${url}`)
+      }
+
+      const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": USER_AGENT,
+        },
         body: "{}",
+        signal: AbortSignal.timeout(timeout ?? DEFAULT_TIMEOUT_MS),
       })
       if (!response.ok) {
         const body = await response.text().catch(() => "")

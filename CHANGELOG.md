@@ -1,5 +1,34 @@
 # @opensea/cli
 
+## 2.5.0
+
+### Minor Changes
+
+- 13db5ef: Expose `include_auto_hidden` on the NFTs-by-account endpoint.
+
+  `GET /api/v2/chain/{chain}/account/{address}/nfts` leaves out NFTs the system hid on its own, which is how airdropped and unsolicited items stay out of a wallet's default view. The spec documents `include_auto_hidden` for callers that want them back, and until now neither package could send it.
+
+  In the SDK, `nfts.getNFTsByAccount` takes a trailing options object: `getNFTsByAccount(address, limit?, next?, chain?, { includeAutoHidden })`. The four positional arguments are unchanged, so existing calls compile and behave as before, and the next filter this endpoint gains goes in the same object instead of becoming a sixth positional argument. The fetcher rewrites the key to `include_auto_hidden`, and a caller who sets nothing sends nothing, which leaves the server default of false in place. The deprecated `api.getNFTsByAccount` passthrough forwards the options too.
+
+  In the CLI, `opensea nfts list-by-account` gains `--include-auto-hidden`, and the programmatic `nfts.listByAccount` gains a matching `includeAutoHidden` option.
+
+  The flag moves only the automatic hiding. NFTs the account holder hid themselves are still not returned, and it does not surface NFTs removed for policy violations.
+
+### Patch Changes
+
+- f73ee96: `opensea auth request-key` now sends the CLI's own `User-Agent`, aborts at `--timeout` instead of hanging, and logs its request under `--verbose`. Output is unchanged: the command still prints the API's raw snake_case body.
+
+  This is the one command that issues its own request rather than going through `OpenSeaClient`, because the endpoint is unauthenticated and `getClient()` exits when no API key is set. That bypass also skipped the client's identity header, its timeout and its verbose logging, so a hung connection hung the CLI indefinitely and CLI-minted keys reached the API as an unidentified request. The endpoint does record `User-Agent`, so that is the header worth sending.
+
+  It still does not call `OpenSeaAPI.requestInstantApiKey` from `@opensea/sdk`. That helper camelizes its response while every other command here prints the raw wire body, so routing this one through it would rename `api_key` to `apiKey` for anyone piping `--format json` into a script, and it hardcodes `x-app-id: opensea-js`, which would attribute CLI traffic to the SDK. The reasoning is now a comment on the command so it does not get re-litigated.
+
+- Updated dependencies [13db5ef]
+- Updated dependencies [a2e2cfa]
+- Updated dependencies [8783ee4]
+- Updated dependencies [e1f390c]
+  - @opensea/sdk@12.7.0
+  - @opensea/api-types@0.11.1
+
 ## 2.4.2
 
 ### Patch Changes

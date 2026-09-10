@@ -64,10 +64,12 @@ opensea collections traits <slug>
 opensea nfts get <chain> <contract> <token-id>
 opensea nfts list-by-collection <slug> [--limit <n>] [--next <cursor>]
 opensea nfts list-by-contract <chain> <contract> [--limit <n>] [--next <cursor>]
-opensea nfts list-by-account <chain> <address> [--limit <n>] [--next <cursor>]
+opensea nfts list-by-account <chain> <address> [--limit <n>] [--next <cursor>] [--include-auto-hidden]
 opensea nfts refresh <chain> <contract> <token-id>
 opensea nfts contract <chain> <address>
 ```
+
+`--include-auto-hidden` also returns NFTs hidden automatically because a third party minted or sent them to the account. NFTs the holder hid themselves stay hidden, and NFTs removed for policy violations are not returned.
 
 ## Listings
 

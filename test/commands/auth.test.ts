@@ -71,6 +71,148 @@ describe("authCommand", () => {
     logSpy.mockRestore()
   })
 
+  it("request-key identifies itself with the CLI user agent", async () => {
+    // Of the three callers of this endpoint the SDK sends x-app-id, the skill
+    // script sends its own User-Agent, and this one used to send neither, so
+    // CLI-minted keys were indistinguishable from an anonymous script. The
+    // endpoint records User-Agent (it becomes the http.user_agent span
+    // attribute), which is why this is the header worth sending.
+    const ctx = createCommandTestContext()
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ api_key: "k-123" }), { status: 201 }),
+    )
+
+    const cmd = authCommand(() => undefined, ctx.getFormat)
+    await cmd.parseAsync(["request-key"], { from: "user" })
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit & {
+      headers: Record<string, string>
+    }
+    expect(init.headers["User-Agent"]).toMatch(/^opensea-cli\/\d+\.\d+\.\d+/)
+
+    logSpy.mockRestore()
+  })
+
+  it("request-key prints the raw wire body rather than camelizing it", async () => {
+    // Every other command prints the API's snake_case keys. Routing this one
+    // through OpenSeaAPI.requestInstantApiKey would rename api_key to apiKey
+    // and break anyone piping --format json into a script, so the wire casing
+    // is pinned here on purpose.
+    const ctx = createCommandTestContext()
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    fetchSpy.mockResolvedValue(
+      new Response(
+        JSON.stringify({ api_key: "k-123", expires_at: "2026-01-01" }),
+        { status: 201 },
+      ),
+    )
+
+    const cmd = authCommand(() => undefined, ctx.getFormat)
+    await cmd.parseAsync(["request-key"], { from: "user" })
+
+    const printed = JSON.parse(logSpy.mock.calls[0][0] as string) as Record<
+      string,
+      unknown
+    >
+    expect(printed).toEqual({ api_key: "k-123", expires_at: "2026-01-01" })
+    expect(printed).not.toHaveProperty("apiKey")
+
+    logSpy.mockRestore()
+  })
+
+  it("request-key bounds the request with a timeout signal", async () => {
+    // Without a signal a hung connection hangs the CLI forever, while every
+    // request that goes through OpenSeaClient aborts at --timeout.
+    const ctx = createCommandTestContext()
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    fetchSpy.mockResolvedValue(new Response("{}", { status: 201 }))
+
+    const cmd = authCommand(
+      () => undefined,
+      ctx.getFormat,
+      () => undefined,
+      undefined,
+      () => ({ timeout: 1234 }),
+    )
+    await cmd.parseAsync(["request-key"], { from: "user" })
+
+    const init = fetchSpy.mock.calls[0][1] as RequestInit
+    expect(init.signal).toBeInstanceOf(AbortSignal)
+
+    logSpy.mockRestore()
+  })
+
+  it("request-key aborts once the timeout elapses", async () => {
+    const ctx = createCommandTestContext()
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    // A server that never answers. The only thing that ends this call is the
+    // signal, so the assertion fails rather than hangs if the signal is gone.
+    fetchSpy.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = (init as RequestInit).signal
+          signal?.addEventListener("abort", () =>
+            reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            ),
+          )
+        }),
+    )
+
+    const cmd = authCommand(
+      () => undefined,
+      ctx.getFormat,
+      () => undefined,
+      undefined,
+      () => ({ timeout: 10 }),
+    )
+
+    await expect(
+      cmd.parseAsync(["request-key"], { from: "user" }),
+    ).rejects.toThrow(/abort/i)
+
+    logSpy.mockRestore()
+  })
+
+  it("request-key logs the request under --verbose", async () => {
+    const ctx = createCommandTestContext()
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    fetchSpy.mockResolvedValue(new Response("{}", { status: 201 }))
+
+    const cmd = authCommand(
+      () => undefined,
+      ctx.getFormat,
+      () => undefined,
+      undefined,
+      () => ({ verbose: true }),
+    )
+    await cmd.parseAsync(["request-key"], { from: "user" })
+
+    expect(errSpy).toHaveBeenCalledWith(
+      "[verbose] POST https://api.opensea.io/api/v2/auth/keys",
+    )
+
+    errSpy.mockRestore()
+    logSpy.mockRestore()
+  })
+
+  it("request-key stays quiet without --verbose", async () => {
+    const ctx = createCommandTestContext()
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    fetchSpy.mockResolvedValue(new Response("{}", { status: 201 }))
+
+    const cmd = authCommand(() => undefined, ctx.getFormat)
+    await cmd.parseAsync(["request-key"], { from: "user" })
+
+    expect(errSpy).not.toHaveBeenCalled()
+
+    errSpy.mockRestore()
+    logSpy.mockRestore()
+  })
+
   it("request-key uses --base-url override", async () => {
     const ctx = createCommandTestContext()
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {})

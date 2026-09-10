@@ -391,14 +391,22 @@ class NFTsAPI {
     })
   }
 
+  /**
+   * List an account's NFTs. `includeAutoHidden` also returns NFTs hidden
+   * automatically because a third party minted or sent them to the account.
+   * NFTs the holder hid themselves stay out of the response, and NFTs removed
+   * for policy violations are not returned either.
+   */
   async listByAccount(
     chain: Chain,
     address: string,
-    options?: { limit?: number; next?: string },
+    options?: { limit?: number; next?: string; includeAutoHidden?: boolean },
   ): Promise<{ nfts: NFT[]; next?: string }> {
     return this.client.get(`/api/v2/chain/${chain}/account/${address}/nfts`, {
       limit: options?.limit,
       next: options?.next,
+      // Param keys go out verbatim, so spell the wire name here.
+      include_auto_hidden: options?.includeAutoHidden,
     })
   }
 

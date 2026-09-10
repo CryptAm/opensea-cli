@@ -160,6 +160,15 @@ program.addCommand(
     getFormat,
     () => program.opts<{ authBaseUrl?: string }>().authBaseUrl,
     getClient,
+    () => {
+      // `--timeout` carries a commander default, so it is always a string
+      // here, same as the getClient() block above.
+      const opts = program.opts<{ timeout: string; verbose?: boolean }>()
+      return {
+        timeout: parseIntOption(opts.timeout, "--timeout"),
+        verbose: opts.verbose,
+      }
+    },
   ),
 )
 program.addCommand(
