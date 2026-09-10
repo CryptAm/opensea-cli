@@ -1,5 +1,34 @@
 # @opensea/cli
 
+## 2.6.0
+
+### Minor Changes
+
+- d198f6d: `opensea whoami` now reports every wallet the stored token resolves to, not just
+  one address. The new `linked_wallets` block reads the token's `linked_wallets`
+  claim through the SDK's `extractLinkedWallets`, lists the wallets it names, and
+  marks the token's own with `primary: true`. The claim already contains that
+  wallet, so it is marked in place rather than appended, which would double count
+  it.
+
+  A count that is not known is never printed as an empty list. `status` is
+  `listed` or `empty` when the claim was read, and `claim_absent`,
+  `claim_unreadable` or `token_unreadable` when it was not, each with a message
+  and no `count`. A token minted without the claim is therefore distinguishable
+  from an account that genuinely has one wallet, which is what a client needs
+  before it treats a portfolio total as complete.
+
+  The command's private JWT parser is gone; it now uses the SDK's exported
+  `tryDecodeJwtPayload`, so the CLI and SDK share one decoder. One side effect:
+  under `--diagnostic`, `jwt_error` now reads "Access token is not a readable JWT"
+  instead of the parser's own "Not a JWT" text, and that block also shows the raw
+  `linked_wallets` claim.
+
+### Patch Changes
+
+- Updated dependencies [06dcdc3]
+  - @opensea/sdk@12.8.0
+
 ## 2.5.0
 
 ### Minor Changes

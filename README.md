@@ -120,7 +120,7 @@ opensea --format table collections stats mfers
 | `swaps` | Get swap quotes for token trading |
 | `accounts` | Get account details |
 | `agent` | Declare an agent account and run the ownership handshake |
-| `whoami` | Show the current wallet, scopes, and scope source |
+| `whoami` | Show the current wallet, the wallets its token covers, scopes, and scope source |
 | `api request` | Call any API v2 endpoint with the active API key and wallet JWT |
 
 This table is a high-level summary; run `opensea --help` for the current command list and [docs/cli-reference.md](docs/cli-reference.md) for the full reference.

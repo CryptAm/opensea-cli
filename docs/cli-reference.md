@@ -19,11 +19,47 @@ Full command reference for all `opensea` CLI commands.
 opensea whoami
 ```
 
-`whoami` reads the current local auth token and shows the wallet address,
-requested and granted scopes, any broader-scope warning, the scope source, and
-expiry. Use `opensea whoami --diagnostic` to inspect decoded JWT claims and
-scope differences. Those claims are unverified, provider-specific diagnostics
-only and never authorization data.
+`whoami` reads the current local auth token and shows the wallet address, the
+wallets the token resolves to, requested and granted scopes, any broader-scope
+warning, the scope source, and expiry. Use `opensea whoami --diagnostic` to
+inspect decoded JWT claims and scope differences. Those claims are unverified,
+provider-specific diagnostics only and never authorization data.
+
+The `linked_wallets` block answers how many wallets the token covers, which is
+what decides whether a portfolio total built from it is complete. It comes from
+the token's `linked_wallets` claim, which already contains the token's own
+wallet, so that entry is marked `primary` in place rather than added again. Its
+`status` separates a real count from an unknown one:
+
+| `status` | Meaning |
+|---|---|
+| `listed` | The claim listed wallets. `count` and `wallets` are the full set. |
+| `empty` | The claim was read and named no wallets. `count` is 0. |
+| `claim_absent` | The token carries no `linked_wallets` claim, so the count is unknown. |
+| `claim_unreadable` | The claim is present but is not a list, a `null` value included, so the count is unknown. |
+| `token_unreadable` | The stored access token is not a readable JWT, so the count is unknown. |
+
+The three unknown statuses carry a `message` and no `count`, so a token minted
+without the claim never looks like an account that has one wallet.
+
+Everything `whoami` prints is read out of the token stored in
+`~/.opensea/auth.json`, including the wallet address itself, and none of it is
+re-verified against the server. Treat it as what your token says, not as an
+authorization decision.
+
+```json
+{
+  "address": "0x1111111111111111111111111111111111111111",
+  "linked_wallets": {
+    "status": "listed",
+    "count": 2,
+    "wallets": [
+      { "address": "0x1111111111111111111111111111111111111111", "primary": true },
+      { "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", "primary": false }
+    ]
+  }
+}
+```
 
 ## Login
 
