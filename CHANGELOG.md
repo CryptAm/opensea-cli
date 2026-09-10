@@ -1,5 +1,28 @@
 # @opensea/cli
 
+## 2.4.2
+
+### Patch Changes
+
+- d8f6d6f: Bound and validate the `Retry-After` header in the CLI's retry path. The client now honors only a positive integer count of seconds or an HTTP-date in the future, and waits at most 300 seconds regardless of what the header asks for. Anything else, including fractional values such as `1.5`, values carrying a unit such as `5s`, zero, negatives and dates already in the past, is discarded and the client falls back to its own exponential backoff.
+
+  The old parser passed the header through `Number()` and multiplied by 1000 with no validation and no ceiling, so a server answering `retry-after: 999999` put the CLI to sleep for 11.5 days with no output. Past roughly 24.8 days the millisecond value stopped fitting in a 32-bit signed integer, so `setTimeout` truncated it to 1ms and the retry fired immediately with no backoff at all. Both shapes are reachable from a misconfigured proxy, not only a hostile one.
+
+  The 300 second ceiling and the accept/reject rules match `_parseRetryAfter` in `@opensea/sdk`, which already validated and capped the same header. That parser is private to the SDK and takes a `Response` rather than a header string, so the CLI keeps its own copy and both carry a comment pointing at the other.
+
+  Callers that relied on a fractional or unit-suffixed `Retry-After` being honored will now see the configured backoff instead. Retries are off by default (`--max-retries` defaults to 0), so this only affects runs that opted into retrying.
+
+- Updated dependencies [3a2ff37]
+- Updated dependencies [71e1597]
+- Updated dependencies [8ea9187]
+- Updated dependencies [12f1376]
+- Updated dependencies [77206d0]
+- Updated dependencies [3271b5b]
+- Updated dependencies [bd4aa58]
+  - @opensea/api-types@0.11.0
+  - @opensea/sdk@12.6.0
+  - @opensea/wallet-adapters@1.2.1
+
 ## 2.4.1
 
 ### Patch Changes

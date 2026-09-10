@@ -8,18 +8,69 @@ const USER_AGENT = `opensea-cli/${__VERSION__}`
 const DEFAULT_MAX_RETRIES = 0
 const DEFAULT_RETRY_BASE_DELAY_MS = 1_000
 
+/**
+ * Largest Retry-After value the client will take from a server, in seconds. A
+ * header asking for more is clamped to this.
+ *
+ * It bounds the remote input, not the total wait. fetchWithRetry takes the
+ * greater of this and its own exponential backoff and then adds jitter, and
+ * both of those come from the operator's --retry-base-delay rather than from
+ * the server. Kept equal to MAX_RETRY_AFTER_SECONDS in
+ * packages/sdk/src/api/api.ts.
+ */
+const MAX_RETRY_AFTER_SECONDS = 300
+
 function isRetryableStatus(status: number, method: string): boolean {
   if (status === 429) return true
   return status >= 500 && method === "GET"
 }
 
+/**
+ * Parses a Retry-After header into milliseconds.
+ *
+ * Accepts a positive integer count of seconds or an HTTP-date in the future,
+ * and nothing else. Fractional values, trailing units, zero, negatives and past
+ * dates all return undefined, which leaves the caller on its own backoff. The
+ * returned value is capped at MAX_RETRY_AFTER_SECONDS so a hostile or
+ * misconfigured server cannot park the CLI for days on a single header.
+ *
+ * Dates go through Date.parse, which is looser than the RFC 9110 HTTP-date
+ * grammar and will take "Jan 1, 2099". That is deliberate. A hand-rolled
+ * grammar is likelier to reject a valid asctime or RFC 850 date than Date.parse
+ * is to accept a harmful one, whatever it does accept is still clamped to
+ * MAX_RETRY_AFTER_SECONDS, and the SDK parses dates the same way.
+ *
+ * The SDK carries a second copy of these rules in `_parseRetryAfter` in
+ * packages/sdk/src/api/api.ts. It is private there and takes a Response rather
+ * than a header string, so the two are kept in sync by hand. Change both.
+ */
 function parseRetryAfter(header: string | null): number | undefined {
   if (!header) return undefined
-  const seconds = Number(header)
-  if (!Number.isNaN(seconds)) return seconds * 1000
-  const date = Date.parse(header)
-  if (!Number.isNaN(date)) return Math.max(0, date - Date.now())
-  return undefined
+  const trimmed = header.trim()
+
+  // Anything starting with a digit or a minus sign is a delay-seconds value,
+  // never a date, so a malformed one is rejected rather than fed to Date.parse.
+  if (/^-?\d/.test(trimmed)) {
+    if (!/^-?\d+$/.test(trimmed)) return undefined
+    const seconds = Number(trimmed)
+    if (!Number.isSafeInteger(seconds) || seconds <= 0) return undefined
+    return Math.min(seconds, MAX_RETRY_AFTER_SECONDS) * 1_000
+  }
+
+  const parsedMs = Date.parse(trimmed)
+  if (Number.isNaN(parsedMs)) return undefined
+  const diffSeconds = Math.ceil((parsedMs - Date.now()) / 1_000)
+  if (diffSeconds <= 0) return undefined
+  return Math.min(diffSeconds, MAX_RETRY_AFTER_SECONDS) * 1_000
+}
+
+function appendParams(url: URL, params?: Record<string, unknown>): void {
+  if (!params) return
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null) {
+      url.searchParams.set(key, String(value))
+    }
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -58,14 +109,7 @@ export class OpenSeaClient {
 
   async get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`)
-
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null) {
-          url.searchParams.set(key, String(value))
-        }
-      }
-    }
+    appendParams(url, params)
 
     if (this.verbose) {
       console.error(`[verbose] GET ${url.toString()}`)
@@ -88,14 +132,7 @@ export class OpenSeaClient {
     params?: Record<string, unknown>,
   ): Promise<{ text: string; isMarkdown: boolean }> {
     const url = new URL(`${this.baseUrl}${path}`)
-
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null) {
-          url.searchParams.set(key, String(value))
-        }
-      }
-    }
+    appendParams(url, params)
 
     if (this.verbose) {
       console.error(`[verbose] GET ${url.toString()} (Accept: text/markdown)`)
@@ -157,14 +194,7 @@ export class OpenSeaClient {
     params?: Record<string, unknown>,
   ): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`)
-
-    if (params) {
-      for (const [key, value] of Object.entries(params)) {
-        if (value !== undefined && value !== null) {
-          url.searchParams.set(key, String(value))
-        }
-      }
-    }
+    appendParams(url, params)
 
     const headers: Record<string, string> = { ...this.defaultHeaders }
 

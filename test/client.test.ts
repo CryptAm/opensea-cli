@@ -412,6 +412,121 @@ describe("OpenSeaClient", () => {
     })
   })
 
+  describe("Retry-After handling", () => {
+    // Base delay for the single retry these tests allow. A header the client
+    // rejects leaves the wait at exactly this, with jitter pinned to zero.
+    const BACKOFF_MS = 100
+    const NOW = new Date("2026-01-01T00:00:00Z")
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      vi.setSystemTime(NOW)
+      vi.spyOn(Math, "random").mockReturnValue(0)
+    })
+
+    afterEach(() => {
+      vi.useRealTimers()
+      vi.restoreAllMocks()
+    })
+
+    function retryOnce(retryAfter: string) {
+      const client = new OpenSeaClient({
+        apiKey: "test-key",
+        maxRetries: 1,
+        retryBaseDelay: BACKOFF_MS,
+      })
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          new Response("Rate limited", {
+            status: 429,
+            headers: { "Retry-After": retryAfter },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ ok: true }), { status: 200 }),
+        )
+      return { fetchSpy, result: client.get("/api/v2/test") }
+    }
+
+    /**
+     * Drives one retry on fake timers and pins the wait to an exact
+     * millisecond: one call left at expectedDelayMs - 1, two at
+     * expectedDelayMs. Asserting the earlier boundary too is what separates a
+     * capped implementation from one that merely computes a cap, since an
+     * uncapped client is still asleep when the capped one has already retried.
+     */
+    async function expectRetryAt(retryAfter: string, expectedDelayMs: number) {
+      const { fetchSpy, result } = retryOnce(retryAfter)
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(expectedDelayMs - 1)
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+
+      await expect(result).resolves.toEqual({ ok: true })
+    }
+
+    it("waits the number of seconds the header asks for", async () => {
+      await expectRetryAt("5", 5_000)
+    })
+
+    it("tolerates surrounding whitespace", async () => {
+      await expectRetryAt("  5  ", 5_000)
+    })
+
+    it("caps an oversized value at 300 seconds", async () => {
+      await expectRetryAt("999999", 300_000)
+    })
+
+    it("caps a value large enough to overflow a 32-bit timer", async () => {
+      // Unclamped this becomes 999999999000ms, which setTimeout truncates to
+      // 1ms, so the client would retry immediately with no backoff at all.
+      await expectRetryAt("999999999", 300_000)
+    })
+
+    it("falls back to the backoff on a negative value", async () => {
+      await expectRetryAt("-5", BACKOFF_MS)
+    })
+
+    it("falls back to the backoff on zero", async () => {
+      await expectRetryAt("0", BACKOFF_MS)
+    })
+
+    it("falls back to the backoff on a value carrying a unit", async () => {
+      await expectRetryAt("5s", BACKOFF_MS)
+    })
+
+    it("falls back to the backoff on a fractional value", async () => {
+      await expectRetryAt("1.5", BACKOFF_MS)
+    })
+
+    it("falls back to the backoff on unparseable text", async () => {
+      await expectRetryAt("soon", BACKOFF_MS)
+    })
+
+    it("waits until a future HTTP-date", async () => {
+      const header = new Date(NOW.getTime() + 10_000).toUTCString()
+      await expectRetryAt(header, 10_000)
+    })
+
+    it("caps a far-future HTTP-date at 300 seconds", async () => {
+      const header = new Date(
+        NOW.getTime() + 30 * 24 * 60 * 60 * 1_000,
+      ).toUTCString()
+      await expectRetryAt(header, 300_000)
+    })
+
+    it("falls back to the backoff on an HTTP-date in the past", async () => {
+      const header = new Date(NOW.getTime() - 10_000).toUTCString()
+      await expectRetryAt(header, BACKOFF_MS)
+    })
+  })
+
   describe("timeout", () => {
     it("passes AbortSignal.timeout to fetch calls", async () => {
       const timedClient = new OpenSeaClient({
