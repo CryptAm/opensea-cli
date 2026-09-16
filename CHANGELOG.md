@@ -1,5 +1,17 @@
 # @opensea/cli
 
+## 2.6.1
+
+### Patch Changes
+
+- cd6e615: Support Arc: offers use the 6-decimal USDC native mirror (0x3600…0000), listings use native USDC, approvals use the OS Ledger conduit. Native (0x0) offer currencies advertised by the API are normalized to the mirror.
+- Updated dependencies [cd6e615]
+- Updated dependencies [0c24b3e]
+- Updated dependencies [fbbbea4]
+- Updated dependencies [cd6e615]
+  - @opensea/sdk@12.9.0
+  - @opensea/api-types@0.12.0
+
 ## 2.6.0
 
 ### Minor Changes

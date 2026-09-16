@@ -23,6 +23,7 @@ export const CHAIN_IDS: Record<string, number> = {
   megaeth: 4326,
   robinhood: 4663,
   somnia: 5031,
+  arc: 5042,
   b3: 8333,
   base: 8453,
   ape_chain: 33139,
