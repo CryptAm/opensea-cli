@@ -1,5 +1,11 @@
 # @opensea/cli
 
+## 2.7.0
+
+### Minor Changes
+
+- 931433c: Reject numeric option values that are not entirely numeric. `--limit 10foo`, `--limit 1.9`, `--limit 1e2`, `--limit 0x10`, and `--slippage 0.01%` used to be truncated to their numeric prefix and now fail with an "Invalid value" error. Integer options also reject values above `Number.MAX_SAFE_INTEGER`, and float options reject values that overflow to `Infinity`.
+
 ## 2.6.1
 
 ### Patch Changes

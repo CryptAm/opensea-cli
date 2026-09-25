@@ -23,7 +23,7 @@ pnpm run format
 
 1. **Never hand-roll API request/response types**. Import from `@opensea/api-types` via `src/types/api.ts`. Run `pnpm --filter @opensea/api-types run update-spec && pnpm --filter @opensea/api-types run build` before adding endpoints.
 2. **API path check**. `pnpm check-api-paths` (from the repo root) fails if source code references an `/api/v2/...` URL not in `packages/api-types/opensea-api.json`.
-3. **CLI commands are thin**. Parse args, call `OpenSeaClient`, format output with `formatOutput()`. Keep business logic in the client.
+3. **CLI commands are thin**. Parse args, call `OpenSeaClient`, format output with `formatOutput()` (or `outputGet()` from `src/output.ts` for plain GET commands, which also handles TOON). Keep business logic in the client.
 4. **One file per domain in `src/commands/`**. Register new commands in `src/commands/index.ts` and wire in `src/cli.ts`.
 5. **SDK classes in `src/sdk.ts`**. Add domain classes as `readonly` properties on `OpenSeaCLI` for programmatic consumers.
 6. **Auth session invariants**. Persisted tokens require access token, refresh token, wallet address, ISO expiration, scopes, and `oauth`/`siwe` method. Normalize only `0x`-prefixed EVM addresses to lowercase; preserve Solana base58 case.
