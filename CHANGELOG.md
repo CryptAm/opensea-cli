@@ -1,5 +1,14 @@
 # @opensea/cli
 
+## 2.7.1
+
+### Patch Changes
+
+- Updated dependencies [7d51b1f]
+- Updated dependencies [7d51b1f]
+  - @opensea/api-types@0.13.0
+  - @opensea/sdk@12.9.2
+
 ## 2.7.0
 
 ### Minor Changes
