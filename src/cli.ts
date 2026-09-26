@@ -1,4 +1,9 @@
 import { Command } from "commander"
+import {
+  describeApiError,
+  EXIT_API_ERROR,
+  EXIT_AUTH_ERROR,
+} from "./api-error.js"
 import { loadCurrentToken } from "./auth/store.js"
 import { OpenSeaAPIError, OpenSeaClient } from "./client.js"
 import {
@@ -31,10 +36,6 @@ import { type OutputFormat, setOutputOptions } from "./output.js"
 import { parseIntOption } from "./parse.js"
 
 declare const __VERSION__: string
-
-const EXIT_API_ERROR = 1
-const EXIT_AUTH_ERROR = 2
-const EXIT_RATE_LIMITED = 3
 
 const BANNER = `
    ____                   _____
@@ -191,20 +192,9 @@ async function main() {
     await program.parseAsync(process.argv)
   } catch (error) {
     if (error instanceof OpenSeaAPIError) {
-      const isRateLimited = error.statusCode === 429
-      console.error(
-        JSON.stringify(
-          {
-            error: isRateLimited ? "Rate Limited" : "API Error",
-            status: error.statusCode,
-            path: error.path,
-            message: error.responseBody,
-          },
-          null,
-          2,
-        ),
-      )
-      process.exit(isRateLimited ? EXIT_RATE_LIMITED : EXIT_API_ERROR)
+      const { exitCode, payload } = describeApiError(error)
+      console.error(JSON.stringify(payload, null, 2))
+      process.exit(exitCode)
     }
     const label =
       error instanceof TypeError ? "Network Error" : (error as Error).name

@@ -150,6 +150,45 @@ Cross-chain minting returns ordered transactions plus `receipt_request`.
 Submit the transactions in order, save `receipt_request` unchanged to a JSON
 file, and poll it with the transactions command until the status is terminal.
 
+### Publishing a drop
+
+These need a wallet token with `write:drops` (`opensea auth login`).
+
+```bash
+opensea drops publish <slug> [--send] [--wallet-provider <provider>]
+opensea drops unpublish <slug> [--send] [--wallet-provider <provider>]
+opensea drops upload-metadata-ipfs <slug> [--wait] [--interval <seconds>] [--wait-timeout <seconds>]
+opensea drops metadata-ipfs-status <slug> <workflow-execution-id>
+opensea drops create-manifest-upload <slug>
+opensea drops upload-file --context <path|-> --file <path> [--index <n>]
+```
+
+`publish` and `unpublish` print a ready-to-sign transaction. With `--send`
+they sign and send it with the configured EVM wallet and print the hash. The
+transaction's `from` is the contract's onchain owner, and a transaction from
+any other address reverts, so `--send` refuses a wallet whose address differs.
+
+`upload-metadata-ipfs --wait` polls every `--interval` seconds (default 5)
+until the status is no longer `running`, for at most `--wait-timeout` seconds
+(default 600). It exits 1 on `failed`, `not_found` or a timeout.
+
+`upload-file` performs the storage upload an upload context describes (from
+`create-manifest-upload`, `create-item-media-upload` or
+`create-allowlist-upload`) and prints `{"token": ...}`. It takes one context.
+For the array `create-item-media-upload` returns, pass `--index <n>` or pipe
+one element:
+
+```bash
+opensea drops create-manifest-upload my-drop \
+  | opensea drops upload-file --context - --file manifest.csv
+opensea drops create-item-media-upload my-drop --body filenames.json \
+  | jq '.[0]' | opensea drops upload-file --context - --file 1.png
+```
+
+The upload URL and fields are short-lived credentials, so avoid saving the
+context to a shared location. `upload-file` refuses a context whose `url` is
+not HTTPS.
+
 ## Transactions
 
 ```bash

@@ -1,5 +1,6 @@
 import { Command } from "commander"
-import { afterAll, expect, it, vi } from "vitest"
+import { afterAll, describe, expect, it, vi } from "vitest"
+import { describeApiError } from "../src/api-error.js"
 import { OpenSeaAPIError } from "../src/client.js"
 
 vi.mock("../src/commands/index.js", () => ({
@@ -53,4 +54,67 @@ it("exits with code 1 and 'API Error' label on non-429 API error", async () => {
   const parsed = JSON.parse(output)
   expect(parsed.error).toBe("API Error")
   expect(parsed.status).toBe(404)
+  expect(parsed.message).toBe("Not Found")
+  expect(parsed).not.toHaveProperty("response_body")
+  expect(parsed).not.toHaveProperty("hint")
+})
+
+describe("describeApiError", () => {
+  const apiError = (status: number, body: string) =>
+    new OpenSeaAPIError(status, body, "/api/v2/drops/cool-cats/publish")
+
+  it("joins a structured errors body into message and keeps the raw body", () => {
+    const body = JSON.stringify({
+      errors: ["Drop is not published", { message: "Stage is missing" }],
+    })
+    const { exitCode, payload } = describeApiError(apiError(400, body))
+
+    expect(exitCode).toBe(1)
+    expect(payload).toEqual({
+      error: "API Error",
+      status: 400,
+      path: "/api/v2/drops/cool-cats/publish",
+      message: "Drop is not published; Stage is missing",
+      response_body: body,
+    })
+  })
+
+  it("leaves a body that is not an errors array as the message", () => {
+    for (const body of ["Bad Gateway", '{"detail":"nope"}', '{"errors":[]}']) {
+      const { payload } = describeApiError(apiError(502, body))
+      expect(payload.message).toBe(body)
+      expect(payload).not.toHaveProperty("response_body")
+    }
+  })
+
+  it("maps 401 to the auth exit code with a log-in hint", () => {
+    const { exitCode, payload } = describeApiError(
+      apiError(401, '{"errors":["Invalid token"]}'),
+    )
+
+    expect(exitCode).toBe(2)
+    expect(payload.error).toBe("Authentication Error")
+    expect(payload.message).toBe("Invalid token")
+    expect(payload.hint).toContain("opensea auth login")
+    expect(payload.hint).toContain("opensea auth refresh")
+  })
+
+  it("keeps 403 an API error, with an ownership and scope hint", () => {
+    const { exitCode, payload } = describeApiError(apiError(403, "Forbidden"))
+
+    expect(exitCode).toBe(1)
+    expect(payload.error).toBe("API Error")
+    expect(payload.hint).toContain("own the collection")
+    expect(payload.hint).toContain("scope")
+  })
+
+  it("keeps 429 on the rate-limit exit code without a hint", () => {
+    const { exitCode, payload } = describeApiError(
+      apiError(429, "Rate limit exceeded"),
+    )
+
+    expect(exitCode).toBe(3)
+    expect(payload.error).toBe("Rate Limited")
+    expect(payload).not.toHaveProperty("hint")
+  })
 })

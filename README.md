@@ -112,7 +112,7 @@ opensea --format table collections stats mfers
 | `listings` | Query listings and create listing or fulfillment actions |
 | `offers` | Query offers and create offer or fulfillment actions |
 | `orders` | Cancel orders offchain or create onchain cancellation actions |
-| `drops` | Query drops and build same-chain or cross-chain mint transactions |
+| `drops` | Query drops, build same-chain or cross-chain mint transactions, publish or unpublish a drop, and upload its files |
 | `transactions` | Poll transaction and cross-chain receipt status |
 | `events` | List marketplace events (sales, transfers, mints, etc.) |
 | `search` | Search collections, NFTs, tokens, and accounts |
@@ -209,7 +209,7 @@ TOON collapses uniform arrays of objects into CSV-like tables with a single head
 
 - `0` - Success
 - `1` - API error (non-429)
-- `2` - Authentication error
+- `2` - Authentication error (missing API key, or HTTP 401)
 - `3` - Rate limited (HTTP 429)
 
 ## Requirements

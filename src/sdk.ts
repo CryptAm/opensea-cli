@@ -43,8 +43,11 @@ import type {
   DropDeployRequest,
   DropDeployResponse,
   DropDetailedResponse,
+  DropMetadataUploadProgressResponse,
+  DropMetadataUploadResponse,
   DropMintResponse,
   DropPaginatedResponse,
+  DropTransactionResponse,
   EventType,
   FloorPriceHistoryResponse,
   GetTraitsResponse,
@@ -91,6 +94,7 @@ import type {
   TransactionReceiptResponse,
   TransferRequest,
   TransferResponse,
+  UploadContext,
   ValidateMetadataResponse,
   WalletPnlResponse,
   WalletVisibilityResponse,
@@ -301,7 +305,7 @@ class CollectionsAPI {
   }
 }
 
-class DropsAPI {
+export class DropsAPI {
   constructor(private client: OpenSeaClient) {}
 
   async list(options?: {
@@ -353,6 +357,117 @@ class DropsAPI {
     txHash: string,
   ): Promise<DropDeployReceiptResponse> {
     return this.client.get(`/api/v2/drops/deploy/${chain}/${txHash}/receipt`)
+  }
+
+  /**
+   * Build the transaction that publishes the drop's saved draft onchain. Send
+   * it from `from`, the contract's onchain owner, with `sendTransaction`.
+   */
+  async buildPublishTransaction(
+    slug: string,
+  ): Promise<DropTransactionResponse> {
+    return this.client.post(`/api/v2/drops/${encodeURIComponent(slug)}/publish`)
+  }
+
+  async buildUnpublishTransaction(
+    slug: string,
+  ): Promise<DropTransactionResponse> {
+    return this.client.post(
+      `/api/v2/drops/${encodeURIComponent(slug)}/unpublish`,
+    )
+  }
+
+  /**
+   * Sign and send a publish or unpublish transaction. Refuses a wallet whose
+   * address is not the transaction's `from`: the API sets `from` to the
+   * contract's onchain owner, and a transaction from any other address
+   * reverts.
+   */
+  async sendTransaction(
+    tx: DropTransactionResponse,
+    wallet: WalletAdapter,
+    callbacks?: {
+      onSending?: (tx: { to: string; chain: string; chainId: number }) => void
+    },
+  ): Promise<TransactionResult> {
+    const evmWallet = requireEvmAdapter(wallet, "drop transactions")
+    const address = await evmWallet.getAddress()
+    if (address.toLowerCase() !== tx.from.toLowerCase()) {
+      throw new Error(
+        `Wallet ${address} is not the contract owner ${tx.from}. The transaction must be sent from ${tx.from}, or it reverts.`,
+      )
+    }
+    const chainId = resolveChainId(tx.chain)
+    callbacks?.onSending?.({ to: tx.to, chain: tx.chain, chainId })
+    return evmWallet.sendTransaction({
+      to: tx.to,
+      data: tx.data,
+      value: tx.value,
+      chainId,
+    })
+  }
+
+  /** Start uploading the drop's item media and metadata to IPFS. */
+  async uploadMetadataToIpfs(
+    slug: string,
+  ): Promise<DropMetadataUploadResponse> {
+    return this.client.post(
+      `/api/v2/drops/${encodeURIComponent(slug)}/metadata/ipfs`,
+    )
+  }
+
+  async getMetadataIpfsProgress(
+    slug: string,
+    workflowExecutionId: string,
+  ): Promise<DropMetadataUploadProgressResponse> {
+    return this.client.get(
+      `/api/v2/drops/${encodeURIComponent(slug)}/metadata/ipfs/${encodeURIComponent(workflowExecutionId)}`,
+    )
+  }
+
+  /**
+   * Poll an IPFS metadata upload until its status is no longer `running`, and
+   * return that final progress. Throws when `timeoutMs` passes first.
+   */
+  async waitForMetadataIpfs(
+    slug: string,
+    workflowExecutionId: string,
+    options?: {
+      intervalMs?: number
+      timeoutMs?: number
+      onProgress?: (progress: DropMetadataUploadProgressResponse) => void
+    },
+  ): Promise<DropMetadataUploadProgressResponse> {
+    const intervalMs = options?.intervalMs ?? 5_000
+    const timeoutMs = options?.timeoutMs ?? 600_000
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const progress = await this.getMetadataIpfsProgress(
+        slug,
+        workflowExecutionId,
+      )
+      options?.onProgress?.(progress)
+      if (progress.status !== "running") return progress
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        throw new Error(
+          `Timed out after ${timeoutMs}ms waiting for IPFS upload ${workflowExecutionId}; it is still running`,
+        )
+      }
+      await new Promise(resolve =>
+        setTimeout(resolve, Math.min(intervalMs, remainingMs)),
+      )
+    }
+  }
+
+  /**
+   * Request an upload context for the drop's metadata manifest CSV. Upload
+   * the file with `uploadToContext`; the token is not passed to a later call.
+   */
+  async createManifestUpload(slug: string): Promise<UploadContext> {
+    return this.client.post(
+      `/api/v2/drops/${encodeURIComponent(slug)}/items/manifest`,
+    )
   }
 }
 

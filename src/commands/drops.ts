@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { basename } from "node:path"
 import { Command } from "commander"
 import type { OpenSeaClient } from "../client.js"
 import type { OutputFormat } from "../output.js"
@@ -7,6 +9,7 @@ import {
   parseIntOption,
   readJsonBodyOption,
 } from "../parse.js"
+import { DropsAPI } from "../sdk.js"
 import type {
   Chain,
   CrossChainDropMintRequest,
@@ -15,6 +18,7 @@ import type {
   DropDeployResponse,
   DropEligibilityResponse,
   DropMintResponse,
+  DropTransactionResponse,
   SaveDropEditsRequest,
   SaveDropItemMediaRequest,
   SavePrerevealDropItemRequest,
@@ -24,6 +28,97 @@ import type {
   UploadDropItemMediaRequest,
   ValidateDropAllowlistRequest,
 } from "../types/index.js"
+import { selectUploadContext, uploadToContext } from "../upload.js"
+import type { WalletProvider } from "../wallet/index.js"
+import {
+  createWalletForProvider,
+  createWalletFromEnv,
+  isEvmAdapter,
+  WALLET_PROVIDERS,
+  WrongChainTypeError,
+} from "../wallet/index.js"
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk)
+  }
+  return Buffer.concat(chunks).toString("utf8")
+}
+
+async function readUploadContextJson(source: string): Promise<unknown> {
+  if (source !== "-") return readJsonBodyOption(source, "--context")
+  const raw = await readStdin()
+  try {
+    return JSON.parse(raw)
+  } catch (err) {
+    throw new Error(
+      `Could not parse --context from stdin as JSON: ${(err as Error).message}`,
+    )
+  }
+}
+
+function addDropTransactionCommand(
+  cmd: Command,
+  name: "publish" | "unpublish",
+  getClient: () => OpenSeaClient,
+  getFormat: () => OutputFormat,
+): void {
+  const build = (drops: DropsAPI, slug: string) =>
+    name === "publish"
+      ? drops.buildPublishTransaction(slug)
+      : drops.buildUnpublishTransaction(slug)
+
+  cmd
+    .command(name)
+    .description(
+      `Build the ${name} transaction for a drop; with --send, sign and send it from the contract owner's wallet`,
+    )
+    .argument("<slug>", "Collection slug")
+    .option(
+      "--send",
+      "Sign and send the transaction with the configured EVM wallet",
+    )
+    .option(
+      "--wallet-provider <provider>",
+      `Wallet provider to use with --send (${WALLET_PROVIDERS.join(", ")})`,
+    )
+    .action(
+      async (
+        slug: string,
+        options: { send?: boolean; walletProvider?: string },
+      ) => {
+        const drops = new DropsAPI(getClient())
+        const format = getFormat()
+        if (!options.send) {
+          const tx: DropTransactionResponse = await build(drops, slug)
+          console.log(formatOutput(tx, format))
+          return
+        }
+
+        const wallet = options.walletProvider
+          ? createWalletForProvider(options.walletProvider as WalletProvider)
+          : createWalletFromEnv()
+        if (!isEvmAdapter(wallet)) {
+          console.error(
+            `Error: ${new WrongChainTypeError(wallet, "evm", `drop ${name}`).message}`,
+          )
+          process.exit(1)
+        }
+        const address = await wallet.getAddress()
+        console.error(`Using ${wallet.name} wallet: ${address}`)
+
+        const tx = await build(drops, slug)
+        const result = await drops.sendTransaction(tx, wallet, {
+          onSending: sending =>
+            console.error(
+              `Sending ${name} transaction to ${sending.to} on chain ${sending.chain} (${sending.chainId})...`,
+            ),
+        })
+        console.log(formatOutput({ hash: result.hash }, format))
+      },
+    )
+}
 
 export function dropsCommand(
   getClient: () => OpenSeaClient,
@@ -378,6 +473,149 @@ export function dropsCommand(
       )
       console.log(formatOutput(result, getFormat()))
     })
+
+  addDropTransactionCommand(cmd, "publish", getClient, getFormat)
+  addDropTransactionCommand(cmd, "unpublish", getClient, getFormat)
+
+  cmd
+    .command("upload-metadata-ipfs")
+    .description(
+      "Start uploading a drop's item media and metadata to IPFS; with --wait, poll until it finishes",
+    )
+    .argument("<slug>", "Collection slug")
+    .option("--wait", "Poll progress until the upload is no longer running")
+    .option("--interval <seconds>", "Seconds between progress polls", "5")
+    .option(
+      "--wait-timeout <seconds>",
+      "Seconds to wait before giving up with --wait",
+      "600",
+    )
+    .action(
+      async (
+        slug: string,
+        options: { wait?: boolean; interval: string; waitTimeout: string },
+      ) => {
+        const drops = new DropsAPI(getClient())
+        const format = getFormat()
+        // Validated before the POST so a bad flag never starts a workflow.
+        const intervalMs =
+          parseIntOption(options.interval, "--interval") * 1_000
+        const timeoutMs =
+          parseIntOption(options.waitTimeout, "--wait-timeout") * 1_000
+        if (intervalMs < 1_000) {
+          throw new Error("--interval must be at least 1 second")
+        }
+        if (timeoutMs < 0) {
+          throw new Error("--wait-timeout must not be negative")
+        }
+
+        const started = await drops.uploadMetadataToIpfs(slug)
+        if (!options.wait) {
+          console.log(formatOutput(started, format))
+          return
+        }
+
+        console.error(
+          `IPFS upload started: ${started.workflow_execution_id}. Polling every ${intervalMs / 1_000}s...`,
+        )
+        const final = await drops.waitForMetadataIpfs(
+          slug,
+          started.workflow_execution_id,
+          {
+            intervalMs,
+            timeoutMs,
+            onProgress: progress =>
+              console.error(
+                `Status: ${progress.status} (media ${progress.media_upload_progress ?? 0}%, metadata ${progress.metadata_upload_progress ?? 0}%)`,
+              ),
+          },
+        )
+        const output = {
+          workflow_execution_id: started.workflow_execution_id,
+          ...final,
+        }
+        console.log(formatOutput(output, format))
+        if (final.status !== "completed") {
+          console.error(
+            final.status === "failed"
+              ? `Error: IPFS upload failed${final.failure_reason ? `: ${final.failure_reason}` : ""}`
+              : `Error: IPFS upload ${started.workflow_execution_id} was not found`,
+          )
+          process.exit(1)
+        }
+      },
+    )
+
+  cmd
+    .command("metadata-ipfs-status")
+    .description("Get the progress of a drop's IPFS metadata upload")
+    .argument("<slug>", "Collection slug")
+    .argument(
+      "<workflow-execution-id>",
+      "The workflow_execution_id returned by upload-metadata-ipfs",
+    )
+    .action(async (slug: string, workflowExecutionId: string) => {
+      const drops = new DropsAPI(getClient())
+      const result = await drops.getMetadataIpfsProgress(
+        slug,
+        workflowExecutionId,
+      )
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
+    .command("create-manifest-upload")
+    .description(
+      "Request an upload context for a drop's metadata manifest CSV (upload it with upload-file)",
+    )
+    .argument("<slug>", "Collection slug")
+    .action(async (slug: string) => {
+      const drops = new DropsAPI(getClient())
+      const result = await drops.createManifestUpload(slug)
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
+    .command("upload-file")
+    .description(
+      "Upload a file to the storage URL an upload context describes, and print its token. " +
+        "For the array create-item-media-upload returns, pass --index or pipe one element.",
+    )
+    .requiredOption(
+      "--context <path>",
+      "Path to the upload context JSON, or - to read it from stdin",
+    )
+    .requiredOption("--file <path>", "Path to the file to upload")
+    .option(
+      "--index <n>",
+      "Element to use when the context JSON is an array of upload contexts",
+    )
+    .action(
+      async (options: { context: string; file: string; index?: string }) => {
+        const context = selectUploadContext(
+          await readUploadContextJson(options.context),
+          options.index === undefined
+            ? undefined
+            : parseIntOption(options.index, "--index"),
+        )
+        let bytes: Buffer
+        try {
+          bytes = readFileSync(options.file)
+        } catch (err) {
+          throw new Error(
+            `Could not read --file '${options.file}': ${(err as Error).message}`,
+          )
+        }
+        const result = await uploadToContext(
+          context,
+          new Blob([new Uint8Array(bytes)]),
+          {
+            filename: basename(options.file),
+          },
+        )
+        console.log(formatOutput(result, getFormat()))
+      },
+    )
 
   return cmd
 }

@@ -105,6 +105,33 @@ const mint = await client.drops.crossChainMint("pyro-on-ape", {
 const receipt = await client.transactions.receipt(mint.receipt_request)
 ```
 
+Publishing needs a wallet token with `write:drops`. `sendTransaction` refuses a
+wallet that is not the transaction's `from`, the contract's onchain owner.
+
+```typescript
+import { createWalletFromEnv, OpenSeaCLI, uploadToContext } from "@opensea/cli"
+
+const creator = new OpenSeaCLI({
+  apiKey: process.env.OPENSEA_API_KEY,
+  authToken: process.env.OPENSEA_AUTH_TOKEN,
+})
+
+const tx = await creator.drops.buildPublishTransaction("my-drop")
+const { hash } = await creator.drops.sendTransaction(tx, createWalletFromEnv())
+
+const { workflow_execution_id } =
+  await creator.drops.uploadMetadataToIpfs("my-drop")
+const final = await creator.drops.waitForMetadataIpfs(
+  "my-drop",
+  workflow_execution_id,
+)
+
+const context = await creator.drops.createManifestUpload("my-drop")
+await uploadToContext(context, new Blob([csvBytes]), {
+  filename: "manifest.csv",
+})
+```
+
 ## Events
 
 ```typescript

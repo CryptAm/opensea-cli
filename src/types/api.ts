@@ -327,6 +327,10 @@ export type UploadDropItemMediaRequest = Schemas["UploadDropItemMediaRequest"]
 export type SaveDropItemMediaRequest = Schemas["SaveDropItemMediaRequest"]
 export type ValidateDropAllowlistRequest =
   Schemas["ValidateDropAllowlistRequest"]
+export type DropTransactionResponse = Schemas["DropTransactionResponse"]
+export type DropMetadataUploadResponse = Schemas["DropMetadataUploadResponse"]
+export type DropMetadataUploadProgressResponse =
+  Schemas["DropMetadataUploadProgressResponse"]
 
 export type ModifyCollectionRequest = Schemas["ModifyCollectionRequest"]
 export type UpdateCollectionMetadataRequest =

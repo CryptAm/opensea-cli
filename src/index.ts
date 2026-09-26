@@ -2,8 +2,13 @@ export { OpenSeaAPIError, OpenSeaClient } from "./client.js"
 export { checkHealth } from "./health.js"
 export type { OutputFormat } from "./output.js"
 export { formatOutput } from "./output.js"
-export { OpenSeaCLI, SwapsAPI } from "./sdk.js"
+export { DropsAPI, OpenSeaCLI, SwapsAPI } from "./sdk.js"
 export type * from "./types/index.js"
+export {
+  selectUploadContext,
+  UploadContextError,
+  uploadToContext,
+} from "./upload.js"
 export type {
   TransactionRequest,
   TransactionResult,

@@ -1,5 +1,18 @@
 # @opensea/cli
 
+## 2.8.0
+
+### Minor Changes
+
+- fce0d1d: Add drop publish commands: `opensea drops publish <slug>` and `opensea drops unpublish <slug>` print the transaction, and with `--send` sign and send it with the configured EVM wallet after checking that the wallet is the transaction's `from` (the contract's onchain owner). `drops upload-metadata-ipfs <slug> [--wait]` starts the IPFS upload and can poll it to completion, `drops metadata-ipfs-status` reads its progress, `drops create-manifest-upload` requests a manifest CSV upload, and `drops upload-file --context <path|-> --file <path> [--index <n>]` performs the storage upload an upload context describes and prints its token. The programmatic `DropsAPI` gains the matching methods, and `uploadToContext` is exported for reuse.
+
+  API errors whose body is `{"errors": [...]}` now print the joined errors as `message` and keep the raw body under `response_body`. HTTP 401 now exits with code 2 (auth error) instead of 1, and 401 and 403 errors include a `hint`. Scripts that treated every API failure as exit code 1 should also handle 2 for an expired or missing token.
+
+### Patch Changes
+
+- Updated dependencies [fce0d1d]
+  - @opensea/sdk@12.10.0
+
 ## 2.7.1
 
 ### Patch Changes
