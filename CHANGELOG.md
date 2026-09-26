@@ -1,5 +1,13 @@
 # @opensea/cli
 
+## 2.8.1
+
+### Patch Changes
+
+- Updated dependencies [3f93447]
+  - @opensea/api-types@0.14.0
+  - @opensea/sdk@12.10.1
+
 ## 2.8.0
 
 ### Minor Changes
