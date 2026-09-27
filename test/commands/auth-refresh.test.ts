@@ -116,6 +116,33 @@ describe("auth refresh", () => {
     )
   })
 
+  it("tells the user to log in again when the SIWE token exchange is refused", async () => {
+    loadCurrentToken.mockReturnValue({
+      ...storedToken,
+      authMethod: "siwe",
+      scopedTokenId: "token-id",
+      sessionCookie: "access_token=session; refresh_token=refresh",
+    })
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: { message: "Token exchange is not available" },
+        }),
+        { status: 403 },
+      ),
+    )
+    const ctx = createCommandTestContext()
+
+    await expect(
+      authCommand(() => undefined, ctx.getFormat).parseAsync(["refresh"], {
+        from: "user",
+      }),
+    ).rejects.toThrow(
+      "The stored refresh token can no longer be exchanged (403: Token exchange is not available). Run `opensea auth login --private-key --scopes read:eligibility` to sign in again.",
+    )
+    expect(saveToken).not.toHaveBeenCalled()
+  })
+
   it("surfaces OAuth token endpoint failures", async () => {
     oauthRefresh.mockRejectedValue(new Error("Token request failed (400)"))
     const ctx = createCommandTestContext()

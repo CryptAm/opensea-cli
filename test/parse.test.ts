@@ -1,8 +1,10 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { Command } from "commander"
 import { afterEach, beforeEach, describe, expect, it } from "vitest"
 import {
+  forwardChainOption,
   parseFloatOption,
   parseIntOption,
   parseTraitsOption,
@@ -172,5 +174,45 @@ describe("parseTraitsOption", () => {
     expect(() =>
       parseTraitsOption('[{"traitType":"Background","value":42}]'),
     ).toThrow("--traits[0] must be { traitType: string, value: string }")
+  })
+})
+
+describe("forwardChainOption", () => {
+  function setup(argv: string[], subChainDefault?: string) {
+    const program = new Command()
+      .option("--chain <chain>", "Default chain", "ethereum")
+      .exitOverride()
+    let seen: Record<string, unknown> = {}
+    const sub = new Command("sub")
+      .option("--chain <chain>", "Chain", subChainDefault)
+      .action(function (this: Command) {
+        seen = this.opts()
+      })
+    const plain = new Command("plain").action(function (this: Command) {
+      seen = this.opts()
+    })
+    program.addCommand(sub).addCommand(plain)
+    program.hook("preAction", (_p, action) =>
+      forwardChainOption(program, action),
+    )
+    program.parse(argv, { from: "user" })
+    return seen
+  }
+
+  it("hands a user-supplied program --chain to the subcommand", () => {
+    expect(setup(["sub", "--chain", "base"]).chain).toBe("base")
+  })
+
+  it("never forwards the program's default", () => {
+    expect(setup(["sub"]).chain).toBeUndefined()
+  })
+
+  it("overrides a subcommand default with the user's value", () => {
+    expect(setup(["sub", "--chain", "base"], "polygon").chain).toBe("base")
+    expect(setup(["sub"], "polygon").chain).toBe("polygon")
+  })
+
+  it("leaves a command without --chain untouched", () => {
+    expect(setup(["plain", "--chain", "base"])).toEqual({})
   })
 })

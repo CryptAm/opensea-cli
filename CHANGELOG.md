@@ -1,5 +1,17 @@
 # @opensea/cli
 
+## 2.9.0
+
+### Minor Changes
+
+- 3cd23af: Fix subcommand `--chain` options, which the program-level `--chain` swallowed. `drops deploy` and `accounts token-transfers` always failed with "required option '--chain <chain>' not specified", and the `--chain` filter on `collections list`, `events list` and `events by-account` was silently dropped. A `--chain` you pass now reaches the subcommand wherever it sits on the line. The program's `ethereum` default is never used as a filter or a required chain, so `drops deploy` without `--chain` still fails rather than targeting ethereum. One behavior change follows from this: `opensea --chain base collections list` now filters by base, where before the flag was ignored.
+
+  Add `drops deploy --send [--wallet-provider <provider>]`, which signs and sends the deploy transaction from the `--sender` wallet (and refuses any other wallet), then prints the hash and chain for `drops deploy-receipt`. Add `drops deploy-receipt --wait [--interval <seconds>] [--wait-timeout <seconds>]`, which polls until the receipt has a collection slug or a `failed` status and exits 1 on failure or timeout. The SDK gains `DropsAPI.sendDeployTransaction` and `DropsAPI.waitForDeployReceipt`.
+
+  Add `drops mint --send [--wallet-provider <provider>]`. Any EVM wallet can send the mint; the output names both the sending wallet and `--minter`.
+
+  Refresh an expired stored wallet auth token automatically, and retry once when a request made with it returns 401, printing a one-line notice to stderr. Tokens passed with `--auth-token` or `OPENSEA_AUTH_TOKEN` are never refreshed, the refresh token is only sent unprompted to OpenSea's own servers (not to a `--base-url` or `--auth-base-url` override), and the new `--no-auth-refresh` global flag turns the behavior off. When the server refuses the refresh token, `auth refresh` and the automatic refresh now fail with `TokenRefreshError` (exit 2) and name the login command to run, instead of printing the raw response body. The drop wait helpers (`waitForDeployReceipt`, `waitForMetadataIpfs`) now reject a non-positive or non-finite `intervalMs` and a negative `timeoutMs`.
+
 ## 2.8.1
 
 ### Patch Changes

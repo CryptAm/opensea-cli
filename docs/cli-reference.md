@@ -11,13 +11,35 @@ Full command reference for all `opensea` CLI commands.
 --base-url <url>    API base URL override (for testing against staging or proxies)
 --timeout           Request timeout in milliseconds (default: 30000)
 --verbose           Log request and response info to stderr
+--no-auth-refresh   Do not refresh an expired or rejected stored wallet auth token
 ```
+
+A `--chain` you pass reaches every subcommand that takes `--chain` (such as
+`collections list`, `events list` or `drops deploy`), whether you put it before
+or after the subcommand. The `ethereum` default never does: a chain filter you
+leave out filters nothing, and a command that needs a chain fails without one.
 
 ## Authentication
 
 ```bash
 opensea whoami
+opensea auth refresh
 ```
+
+A wallet auth token from `opensea login` or `opensea auth login` is
+short-lived. When the stored token has expired, or a request made with it returns 401,
+the CLI refreshes it once, prints a one-line notice to stderr, and retries. It
+never refreshes a token passed with `--auth-token` or `OPENSEA_AUTH_TOKEN`, and
+it only refreshes against OpenSea's own servers, so a `--base-url` other than
+the OpenSea API or any `--auth-base-url` turns it off. `--no-auth-refresh` turns it off
+explicitly. `opensea auth refresh` does the
+same refresh on demand. When the server refuses the refresh token (401 or 403
+for a private-key login, 400, 401 or 403 for OAuth), the error says so and names the
+command to sign in again, such as
+`opensea auth login --private-key --scopes <scopes>`, and exits 2. A failed
+automatic refresh before a request does not stop the request: it goes out with
+the old token, and the refresh error is only reported if the server answers
+401.
 
 `whoami` reads the current local auth token and shows the wallet address, the
 wallets the token resolves to, requested and granted scopes, any broader-scope
@@ -142,13 +164,36 @@ The action commands work across EVM chains and Solana. For Solana, preserve base
 ```bash
 opensea drops list [--type <type>] [--chains <chains>] [--limit <n>] [--next <cursor>]
 opensea drops get <slug>
-opensea drops mint <slug> --minter <address> [--quantity <n>]
+opensea drops mint <slug> --minter <address> [--quantity <n>] [--send] [--wallet-provider <provider>]
 opensea drops cross-chain-mint <slug> --payer <address> --minter <address> --payment-chain <chain> --payment-token <address> [--quantity <n>]
 ```
+
+`mint` prints a ready-to-sign transaction. With `--send` it signs and sends it
+with the configured EVM wallet, which pays, and prints the hash, the chain, the
+sending wallet and the minter. The wallet does not have to be the minter:
+`--minter` receives the tokens either way.
 
 Cross-chain minting returns ordered transactions plus `receipt_request`.
 Submit the transactions in order, save `receipt_request` unchanged to a JSON
 file, and poll it with the transactions command until the status is terminal.
+
+### Deploying a drop contract
+
+```bash
+opensea drops deploy --chain <chain> --name <name> --symbol <symbol> --drop-type <type> --token-type <type> --sender <address> [--send] [--wallet-provider <provider>]
+opensea drops deploy-receipt <chain> <tx-hash> [--wait] [--interval <seconds>] [--wait-timeout <seconds>]
+```
+
+`deploy` prints a ready-to-sign deploy transaction. `--chain` is required and
+never defaults to `ethereum`. With `--send` it signs and sends the transaction
+with the configured EVM wallet, which must be the `--sender` address, and
+prints the hash and chain. Pass both to `deploy-receipt` next.
+
+`deploy-receipt --wait` polls every `--interval` seconds (default 5) until the
+receipt has a `collection_slug` or its status is `failed`, for at most
+`--wait-timeout` seconds (default 600). A `success` receipt without a slug keeps
+polling, since the collection can appear after the contract lands. It exits 1
+on `failed` or a timeout.
 
 ### Publishing a drop
 

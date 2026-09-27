@@ -2,7 +2,7 @@ import type { OpenSeaClientConfig } from "./types/index.js"
 
 declare const __VERSION__: string
 
-const DEFAULT_BASE_URL = "https://api.opensea.io"
+export const DEFAULT_BASE_URL = "https://api.opensea.io"
 export const DEFAULT_TIMEOUT_MS = 30_000
 
 /**
@@ -80,6 +80,17 @@ function appendParams(url: URL, params?: Record<string, unknown>): void {
   }
 }
 
+const AUTH_EXPIRY_MARGIN_MS = 30_000
+
+/** Whether an auth token expiring at `expiresAt` (ISO) should be refreshed. */
+export function isAuthTokenExpired(
+  expiresAt: string,
+  now = Date.now(),
+): boolean {
+  const expiresAtMs = Date.parse(expiresAt)
+  return Number.isNaN(expiresAtMs) || expiresAtMs - AUTH_EXPIRY_MARGIN_MS <= now
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
@@ -93,6 +104,9 @@ export class OpenSeaClient {
   private verbose: boolean
   private maxRetries: number
   private retryBaseDelay: number
+  private authTokenExpiresAt: string | undefined
+  private refreshAuthToken: OpenSeaClientConfig["refreshAuthToken"]
+  private authRefresh: Promise<string> | undefined
 
   constructor(config: OpenSeaClientConfig) {
     this.apiKey = config.apiKey
@@ -103,6 +117,41 @@ export class OpenSeaClient {
     this.verbose = config.verbose ?? false
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.retryBaseDelay = config.retryBaseDelay ?? DEFAULT_RETRY_BASE_DELAY_MS
+    this.authTokenExpiresAt = config.authTokenExpiresAt
+    this.refreshAuthToken = config.refreshAuthToken
+  }
+
+  // One refresh per client. Concurrent requests share it, and a failed
+  // refresh is not retried.
+  private refreshedAuthToken(
+    reason: "expired" | "unauthorized",
+  ): Promise<string> | undefined {
+    const refresh = this.refreshAuthToken
+    if (!refresh) return undefined
+    this.authRefresh ??= refresh(reason).then(token => {
+      this.authToken = token
+      return token
+    })
+    return this.authRefresh
+  }
+
+  // A failed refresh does not fail the request: plenty of endpoints never
+  // need the token, so the request goes out with the one it has. If the
+  // server then answers 401, the 401 path awaits the same failed refresh and
+  // throws its error, which says what to do.
+  private async refreshExpiredAuthToken(): Promise<void> {
+    if (
+      !this.authToken ||
+      !this.authTokenExpiresAt ||
+      !isAuthTokenExpired(this.authTokenExpiresAt)
+    ) {
+      return
+    }
+    try {
+      await this.refreshedAuthToken("expired")
+    } catch {
+      // Surfaced on a 401; see above.
+    }
   }
 
   private get defaultHeaders(): Record<string, string> {
@@ -115,6 +164,7 @@ export class OpenSeaClient {
   }
 
   async get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
+    await this.refreshExpiredAuthToken()
     const url = new URL(`${this.baseUrl}${path}`)
     appendParams(url, params)
 
@@ -138,6 +188,7 @@ export class OpenSeaClient {
     path: string,
     params?: Record<string, unknown>,
   ): Promise<{ text: string; isMarkdown: boolean }> {
+    await this.refreshExpiredAuthToken()
     const url = new URL(`${this.baseUrl}${path}`)
     appendParams(url, params)
 
@@ -200,6 +251,7 @@ export class OpenSeaClient {
     body?: Record<string, unknown>,
     params?: Record<string, unknown>,
   ): Promise<T> {
+    await this.refreshExpiredAuthToken()
     const url = new URL(`${this.baseUrl}${path}`)
     appendParams(url, params)
 
@@ -288,8 +340,40 @@ export class OpenSeaClient {
         continue
       }
 
+      if (response.status === 401) {
+        const retry = await this.withRefreshedAuth(init)
+        if (retry) {
+          try {
+            await response.body?.cancel()
+          } catch {
+            // Stream may already be disturbed
+          }
+          // A 401 is refused before the request is acted on, so resending a
+          // write once is safe.
+          return this.fetchWithRetry(url, retry, path)
+        }
+      }
+
       const text = await response.text()
       throw new OpenSeaAPIError(response.status, text, path)
+    }
+  }
+
+  // The request re-sent with a refreshed token, or undefined when it carried
+  // no token or already carried the refreshed one.
+  private async withRefreshedAuth(
+    init: RequestInit,
+  ): Promise<RequestInit | undefined> {
+    const headers = init.headers as Record<string, string> | undefined
+    const sent = headers?.Authorization
+    if (!sent) return undefined
+    const pending = this.refreshedAuthToken("unauthorized")
+    if (!pending) return undefined
+    const token = await pending
+    if (sent === `Bearer ${token}`) return undefined
+    return {
+      ...init,
+      headers: { ...headers, Authorization: `Bearer ${token}` },
     }
   }
 }

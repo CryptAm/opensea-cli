@@ -8,6 +8,7 @@ import {
   addPaginationOptions,
   parseIntOption,
   readJsonBodyOption,
+  requireChainOption,
 } from "../parse.js"
 import { DropsAPI } from "../sdk.js"
 import type {
@@ -29,7 +30,7 @@ import type {
   ValidateDropAllowlistRequest,
 } from "../types/index.js"
 import { selectUploadContext, uploadToContext } from "../upload.js"
-import type { WalletProvider } from "../wallet/index.js"
+import type { EvmWalletAdapter, WalletProvider } from "../wallet/index.js"
 import {
   createWalletForProvider,
   createWalletFromEnv,
@@ -56,6 +57,53 @@ async function readUploadContextJson(source: string): Promise<unknown> {
       `Could not parse --context from stdin as JSON: ${(err as Error).message}`,
     )
   }
+}
+
+async function openEvmWallet(
+  walletProvider: string | undefined,
+  action: string,
+): Promise<{ wallet: EvmWalletAdapter; address: string }> {
+  const wallet = walletProvider
+    ? createWalletForProvider(walletProvider as WalletProvider)
+    : createWalletFromEnv()
+  if (!isEvmAdapter(wallet)) {
+    console.error(
+      `Error: ${new WrongChainTypeError(wallet, "evm", action).message}`,
+    )
+    process.exit(1)
+  }
+  const address = await wallet.getAddress()
+  console.error(`Using ${wallet.name} wallet: ${address}`)
+  return { wallet, address }
+}
+
+// Validated before any request, so a bad flag never starts a workflow or a
+// poll.
+function parseWaitOptions(options: { interval: string; waitTimeout: string }): {
+  intervalMs: number
+  timeoutMs: number
+} {
+  const intervalMs = parseIntOption(options.interval, "--interval") * 1_000
+  const timeoutMs =
+    parseIntOption(options.waitTimeout, "--wait-timeout") * 1_000
+  if (intervalMs < 1_000) {
+    throw new Error("--interval must be at least 1 second")
+  }
+  if (timeoutMs < 0) {
+    throw new Error("--wait-timeout must not be negative")
+  }
+  return { intervalMs, timeoutMs }
+}
+
+function addWaitOptions(cmd: Command, waitDescription: string): Command {
+  return cmd
+    .option("--wait", waitDescription)
+    .option("--interval <seconds>", "Seconds between polls with --wait", "5")
+    .option(
+      "--wait-timeout <seconds>",
+      "Seconds to wait before giving up with --wait",
+      "600",
+    )
 }
 
 function addDropTransactionCommand(
@@ -96,18 +144,10 @@ function addDropTransactionCommand(
           return
         }
 
-        const wallet = options.walletProvider
-          ? createWalletForProvider(options.walletProvider as WalletProvider)
-          : createWalletFromEnv()
-        if (!isEvmAdapter(wallet)) {
-          console.error(
-            `Error: ${new WrongChainTypeError(wallet, "evm", `drop ${name}`).message}`,
-          )
-          process.exit(1)
-        }
-        const address = await wallet.getAddress()
-        console.error(`Using ${wallet.name} wallet: ${address}`)
-
+        const { wallet } = await openEvmWallet(
+          options.walletProvider,
+          `drop ${name}`,
+        )
         const tx = await build(drops, slug)
         const result = await drops.sendTransaction(tx, wallet, {
           onSending: sending =>
@@ -180,27 +220,67 @@ export function dropsCommand(
 
   cmd
     .command("mint")
-    .description("Build a mint transaction for a drop")
+    .description(
+      "Build a mint transaction for a drop; with --send, sign and send it from the configured wallet",
+    )
     .argument("<slug>", "Collection slug")
     .requiredOption("--minter <address>", "Wallet address to receive tokens")
     .option("--quantity <n>", "Number of tokens to mint", "1")
+    .option(
+      "--send",
+      "Sign and send the transaction with the configured EVM wallet, which pays; --minter receives the tokens",
+    )
+    .option(
+      "--wallet-provider <provider>",
+      `Wallet provider to use with --send (${WALLET_PROVIDERS.join(", ")})`,
+    )
     .action(
       async (
         slug: string,
         options: {
           minter: string
           quantity: string
+          send?: boolean
+          walletProvider?: string
         },
       ) => {
-        const client = getClient()
-        const result = await client.post<DropMintResponse>(
-          `/api/v2/drops/${slug}/mint`,
-          {
+        const quantity = parseIntOption(options.quantity, "--quantity")
+        const drops = new DropsAPI(getClient())
+        const format = getFormat()
+        if (!options.send) {
+          const tx: DropMintResponse = await drops.mint(slug, {
             minter: options.minter,
-            quantity: parseIntOption(options.quantity, "--quantity"),
-          },
+            quantity,
+          })
+          console.log(formatOutput(tx, format))
+          return
+        }
+
+        const { wallet, address } = await openEvmWallet(
+          options.walletProvider,
+          "drop mint",
         )
-        console.log(formatOutput(result, getFormat()))
+        console.error(
+          `Minting ${quantity} from ${address} to minter ${options.minter}`,
+        )
+        const tx = await drops.mint(slug, { minter: options.minter, quantity })
+        const result = await drops.sendMintTransaction(tx, wallet, {
+          onSending: sending =>
+            console.error(
+              `Sending mint transaction to ${sending.to} on chain ${sending.chain} (${sending.chainId})...`,
+            ),
+        })
+        console.log(
+          formatOutput(
+            {
+              hash: result.hash,
+              chain: tx.chain,
+              from: address,
+              minter: options.minter,
+            },
+            format,
+          ),
+        )
       },
     )
 
@@ -247,54 +327,129 @@ export function dropsCommand(
 
   cmd
     .command("deploy")
-    .description("Build a deploy-contract transaction for a new drop")
-    .requiredOption("--chain <chain>", "Chain slug (e.g. ethereum, base)")
+    .description(
+      "Build a deploy-contract transaction for a new drop; with --send, sign and send it from the --sender wallet",
+    )
+    // Required, but checked in the action: see requireChainOption.
+    .option("--chain <chain>", "Chain slug, e.g. ethereum or base (required)")
     .requiredOption("--name <name>", "Contract name")
     .requiredOption("--symbol <symbol>", "Contract symbol")
     .requiredOption("--drop-type <type>", "Drop type (e.g. seadrop_v1_erc721)")
     .requiredOption("--token-type <type>", "Token type (e.g. erc721_standard)")
     .requiredOption("--sender <address>", "Deployer wallet address")
+    .option(
+      "--send",
+      "Sign and send the transaction with the configured EVM wallet, which must be --sender",
+    )
+    .option(
+      "--wallet-provider <provider>",
+      `Wallet provider to use with --send (${WALLET_PROVIDERS.join(", ")})`,
+    )
     .action(
-      async (options: {
-        chain: string
-        name: string
-        symbol: string
-        dropType: string
-        tokenType: string
-        sender: string
-      }) => {
-        const client = getClient()
-        const body: DropDeployRequest = {
-          chain: options.chain,
+      async (
+        options: {
+          chain?: string
+          name: string
+          symbol: string
+          dropType: string
+          tokenType: string
+          sender: string
+          send?: boolean
+          walletProvider?: string
+        },
+        command: Command,
+      ) => {
+        const chain = requireChainOption(options.chain, command)
+        const drops = new DropsAPI(getClient())
+        const format = getFormat()
+        const request: DropDeployRequest = {
+          chain,
           contract_name: options.name,
           contract_symbol: options.symbol,
           drop_type: options.dropType,
           token_type: options.tokenType,
           sender: options.sender,
         }
-        const result = await client.post<DropDeployResponse>(
-          "/api/v2/drops/deploy",
-          body,
+        if (!options.send) {
+          const tx: DropDeployResponse = await drops.deploy(request)
+          console.log(formatOutput(tx, format))
+          return
+        }
+
+        const { wallet } = await openEvmWallet(
+          options.walletProvider,
+          "drop deploy",
         )
-        console.log(formatOutput(result, getFormat()))
+        const tx = await drops.deploy(request)
+        const result = await drops.sendDeployTransaction(
+          tx,
+          options.sender,
+          wallet,
+          {
+            onSending: sending =>
+              console.error(
+                `Sending deploy transaction to ${sending.to} on chain ${sending.chain} (${sending.chainId})...`,
+              ),
+          },
+        )
+        console.log(
+          formatOutput({ hash: result.hash, chain: tx.chain }, format),
+        )
+        console.error(
+          `Next: opensea drops deploy-receipt ${tx.chain} ${result.hash} --wait`,
+        )
       },
     )
 
-  cmd
-    .command("deploy-receipt")
-    .description(
-      "Get the receipt for a previously submitted deploy transaction",
-    )
-    .argument("<chain>", "Chain slug")
-    .argument("<tx-hash>", "Transaction hash")
-    .action(async (chain: string, txHash: string) => {
-      const client = getClient()
-      await outputGet(
-        client,
-        getFormat(),
-        `/api/v2/drops/deploy/${chain as Chain}/${txHash}/receipt`,
+  addWaitOptions(
+    cmd
+      .command("deploy-receipt")
+      .description(
+        "Get the receipt for a previously submitted deploy transaction; with --wait, poll until it has a collection slug or fails",
       )
-    })
+      .argument("<chain>", "Chain slug")
+      .argument("<tx-hash>", "Transaction hash"),
+    "Poll until the receipt reports a collection slug or a failed status",
+  ).action(
+    async (
+      chain: string,
+      txHash: string,
+      options: { wait?: boolean; interval: string; waitTimeout: string },
+    ) => {
+      const { intervalMs, timeoutMs } = parseWaitOptions(options)
+      const client = getClient()
+      const format = getFormat()
+      if (!options.wait) {
+        await outputGet(
+          client,
+          format,
+          `/api/v2/drops/deploy/${chain as Chain}/${txHash}/receipt`,
+        )
+        return
+      }
+
+      console.error(
+        `Waiting for deploy ${txHash}. Polling every ${intervalMs / 1_000}s...`,
+      )
+      const receipt = await new DropsAPI(client).waitForDeployReceipt(
+        chain as Chain,
+        txHash,
+        {
+          intervalMs,
+          timeoutMs,
+          onProgress: progress =>
+            console.error(
+              `Status: ${progress.status}${progress.contract_address ? ` (contract ${progress.contract_address})` : ""}`,
+            ),
+        },
+      )
+      console.log(formatOutput(receipt, format))
+      if (receipt.status === "failed") {
+        console.error(`Error: deploy ${txHash} failed`)
+        process.exit(1)
+      }
+    },
+  )
 
   cmd
     .command("save-edits")
@@ -477,74 +632,59 @@ export function dropsCommand(
   addDropTransactionCommand(cmd, "publish", getClient, getFormat)
   addDropTransactionCommand(cmd, "unpublish", getClient, getFormat)
 
-  cmd
-    .command("upload-metadata-ipfs")
-    .description(
-      "Start uploading a drop's item media and metadata to IPFS; with --wait, poll until it finishes",
-    )
-    .argument("<slug>", "Collection slug")
-    .option("--wait", "Poll progress until the upload is no longer running")
-    .option("--interval <seconds>", "Seconds between progress polls", "5")
-    .option(
-      "--wait-timeout <seconds>",
-      "Seconds to wait before giving up with --wait",
-      "600",
-    )
-    .action(
-      async (
-        slug: string,
-        options: { wait?: boolean; interval: string; waitTimeout: string },
-      ) => {
-        const drops = new DropsAPI(getClient())
-        const format = getFormat()
-        // Validated before the POST so a bad flag never starts a workflow.
-        const intervalMs =
-          parseIntOption(options.interval, "--interval") * 1_000
-        const timeoutMs =
-          parseIntOption(options.waitTimeout, "--wait-timeout") * 1_000
-        if (intervalMs < 1_000) {
-          throw new Error("--interval must be at least 1 second")
-        }
-        if (timeoutMs < 0) {
-          throw new Error("--wait-timeout must not be negative")
-        }
+  addWaitOptions(
+    cmd
+      .command("upload-metadata-ipfs")
+      .description(
+        "Start uploading a drop's item media and metadata to IPFS; with --wait, poll until it finishes",
+      )
+      .argument("<slug>", "Collection slug"),
+    "Poll progress until the upload is no longer running",
+  ).action(
+    async (
+      slug: string,
+      options: { wait?: boolean; interval: string; waitTimeout: string },
+    ) => {
+      const drops = new DropsAPI(getClient())
+      const format = getFormat()
+      const { intervalMs, timeoutMs } = parseWaitOptions(options)
 
-        const started = await drops.uploadMetadataToIpfs(slug)
-        if (!options.wait) {
-          console.log(formatOutput(started, format))
-          return
-        }
+      const started = await drops.uploadMetadataToIpfs(slug)
+      if (!options.wait) {
+        console.log(formatOutput(started, format))
+        return
+      }
 
+      console.error(
+        `IPFS upload started: ${started.workflow_execution_id}. Polling every ${intervalMs / 1_000}s...`,
+      )
+      const final = await drops.waitForMetadataIpfs(
+        slug,
+        started.workflow_execution_id,
+        {
+          intervalMs,
+          timeoutMs,
+          onProgress: progress =>
+            console.error(
+              `Status: ${progress.status} (media ${progress.media_upload_progress ?? 0}%, metadata ${progress.metadata_upload_progress ?? 0}%)`,
+            ),
+        },
+      )
+      const output = {
+        workflow_execution_id: started.workflow_execution_id,
+        ...final,
+      }
+      console.log(formatOutput(output, format))
+      if (final.status !== "completed") {
         console.error(
-          `IPFS upload started: ${started.workflow_execution_id}. Polling every ${intervalMs / 1_000}s...`,
+          final.status === "failed"
+            ? `Error: IPFS upload failed${final.failure_reason ? `: ${final.failure_reason}` : ""}`
+            : `Error: IPFS upload ${started.workflow_execution_id} was not found`,
         )
-        const final = await drops.waitForMetadataIpfs(
-          slug,
-          started.workflow_execution_id,
-          {
-            intervalMs,
-            timeoutMs,
-            onProgress: progress =>
-              console.error(
-                `Status: ${progress.status} (media ${progress.media_upload_progress ?? 0}%, metadata ${progress.metadata_upload_progress ?? 0}%)`,
-              ),
-          },
-        )
-        const output = {
-          workflow_execution_id: started.workflow_execution_id,
-          ...final,
-        }
-        console.log(formatOutput(output, format))
-        if (final.status !== "completed") {
-          console.error(
-            final.status === "failed"
-              ? `Error: IPFS upload failed${final.failure_reason ? `: ${final.failure_reason}` : ""}`
-              : `Error: IPFS upload ${started.workflow_execution_id} was not found`,
-          )
-          process.exit(1)
-        }
-      },
-    )
+        process.exit(1)
+      }
+    },
+  )
 
   cmd
     .command("metadata-ipfs-status")

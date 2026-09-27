@@ -1,191 +1,13 @@
-import { Command } from "commander"
 import {
   describeApiError,
   EXIT_API_ERROR,
   EXIT_AUTH_ERROR,
 } from "./api-error.js"
-import { loadCurrentToken } from "./auth/store.js"
-import { OpenSeaAPIError, OpenSeaClient } from "./client.js"
-import {
-  accountsCommand,
-  agentCommand,
-  apiCommand,
-  assetsCommand,
-  authCommand,
-  chainsCommand,
-  collectionsCommand,
-  dropsCommand,
-  eventsCommand,
-  healthCommand,
-  listingsCommand,
-  loginCommand,
-  nftsCommand,
-  offersCommand,
-  ordersCommand,
-  profileCommand,
-  searchCommand,
-  swapsCommand,
-  tokenGroupsCommand,
-  tokensCommand,
-  toolsCommand,
-  transactionsCommand,
-  walletCommand,
-  whoamiCommand,
-} from "./commands/index.js"
-import { type OutputFormat, setOutputOptions } from "./output.js"
-import { parseIntOption } from "./parse.js"
+import { TokenRefreshError } from "./auth/refresh.js"
+import { OpenSeaAPIError } from "./client.js"
+import { createProgram } from "./program.js"
 
-declare const __VERSION__: string
-
-const BANNER = `
-   ____                   _____
-  / __ \\                 / ____|
- | |  | |_ __   ___ _ _| (___   ___  __ _
- | |  | | '_ \\ / _ \\ '_ \\___ \\ / _ \\/ _\` |
- | |__| | |_) |  __/ | | |___) |  __/ (_| |
-  \\____/| .__/ \\___|_| |_|____/ \\___|\\__,_|
-        | |
-        |_|
-`
-
-const program = new Command()
-
-program
-  .name("opensea")
-  .description("OpenSea CLI - Query the OpenSea API from the command line")
-  .version(__VERSION__)
-  .addHelpText("before", BANNER)
-  .option("--api-key <key>", "OpenSea API key (or set OPENSEA_API_KEY env var)")
-  .option("--chain <chain>", "Default chain", "ethereum")
-  .option("--format <format>", "Output format (json, table, or toon)", "json")
-  .option("--base-url <url>", "API base URL")
-  .option("--timeout <ms>", "Request timeout in milliseconds", "30000")
-  .option("--verbose", "Log request and response info to stderr")
-  .option(
-    "--fields <fields>",
-    "Comma-separated list of fields to include in output",
-  )
-  .option("--max-lines <lines>", "Truncate output after N lines")
-  .option("--max-retries <n>", "Max retries on 429/5xx (0 to disable)", "3")
-  .option("--no-retry", "Disable request retries")
-  .option(
-    "--auth-token <token>",
-    "Auth bearer token for wallet-authenticated endpoints (or set OPENSEA_AUTH_TOKEN env var)",
-  )
-  .option("--auth-base-url <url>", "Auth server base URL")
-
-function getClient(): OpenSeaClient {
-  const opts = program.opts<{
-    apiKey?: string
-    chain: string
-    baseUrl?: string
-    timeout: string
-    verbose?: boolean
-    maxRetries: string
-    retry: boolean
-    authToken?: string
-  }>()
-
-  const apiKey = opts.apiKey ?? process.env.OPENSEA_API_KEY
-  if (!apiKey) {
-    console.error(
-      "Error: API key required. Use --api-key or set OPENSEA_API_KEY environment variable.",
-    )
-    process.exit(EXIT_AUTH_ERROR)
-  }
-
-  const maxRetries = opts.retry
-    ? parseIntOption(opts.maxRetries, "--max-retries")
-    : 0
-
-  const authToken =
-    opts.authToken ??
-    process.env.OPENSEA_AUTH_TOKEN ??
-    loadCurrentToken()?.accessToken
-
-  return new OpenSeaClient({
-    apiKey,
-    authToken,
-    chain: opts.chain,
-    baseUrl: opts.baseUrl,
-    timeout: parseIntOption(opts.timeout, "--timeout"),
-    verbose: opts.verbose,
-    maxRetries,
-  })
-}
-
-function getFormat(): OutputFormat {
-  const opts = program.opts<{ format: string }>()
-  if (opts.format === "table") return "table"
-  if (opts.format === "toon") return "toon"
-  return "json"
-}
-
-program.hook("preAction", () => {
-  const opts = program.opts<{
-    fields?: string
-    maxLines?: string
-  }>()
-  let maxLines: number | undefined
-  if (opts.maxLines) {
-    maxLines = parseIntOption(opts.maxLines, "--max-lines")
-    if (maxLines < 1) {
-      console.error("Error: --max-lines must be >= 1")
-      process.exit(2)
-    }
-  }
-  setOutputOptions({
-    fields: opts.fields?.split(",").map(f => f.trim()),
-    maxLines,
-  })
-})
-
-program.addCommand(assetsCommand(getClient, getFormat))
-program.addCommand(apiCommand(getClient, getFormat))
-program.addCommand(chainsCommand(getClient, getFormat))
-program.addCommand(collectionsCommand(getClient, getFormat))
-program.addCommand(dropsCommand(getClient, getFormat))
-program.addCommand(nftsCommand(getClient, getFormat))
-program.addCommand(listingsCommand(getClient, getFormat))
-program.addCommand(offersCommand(getClient, getFormat))
-program.addCommand(ordersCommand(getClient, getFormat))
-program.addCommand(eventsCommand(getClient, getFormat))
-program.addCommand(accountsCommand(getClient, getFormat))
-program.addCommand(agentCommand(getClient, getFormat))
-program.addCommand(profileCommand(getClient, getFormat))
-program.addCommand(tokensCommand(getClient, getFormat))
-program.addCommand(tokenGroupsCommand(getClient, getFormat))
-program.addCommand(
-  authCommand(
-    () => program.opts<{ baseUrl?: string }>().baseUrl,
-    getFormat,
-    () => program.opts<{ authBaseUrl?: string }>().authBaseUrl,
-    getClient,
-    () => {
-      // `--timeout` carries a commander default, so it is always a string
-      // here, same as the getClient() block above.
-      const opts = program.opts<{ timeout: string; verbose?: boolean }>()
-      return {
-        timeout: parseIntOption(opts.timeout, "--timeout"),
-        verbose: opts.verbose,
-      }
-    },
-  ),
-)
-program.addCommand(
-  loginCommand(
-    getFormat,
-    () => program.opts<{ authBaseUrl?: string }>().authBaseUrl,
-    () => program.opts<{ baseUrl?: string }>().baseUrl,
-  ),
-)
-program.addCommand(searchCommand(getClient, getFormat))
-program.addCommand(swapsCommand(getClient, getFormat))
-program.addCommand(toolsCommand(getClient, getFormat))
-program.addCommand(transactionsCommand(getClient, getFormat))
-program.addCommand(healthCommand(getClient, getFormat))
-program.addCommand(walletCommand(getFormat))
-program.addCommand(whoamiCommand(getFormat))
+const program = createProgram()
 
 async function main() {
   try {
@@ -195,6 +17,16 @@ async function main() {
       const { exitCode, payload } = describeApiError(error)
       console.error(JSON.stringify(payload, null, 2))
       process.exit(exitCode)
+    }
+    if (error instanceof TokenRefreshError) {
+      console.error(
+        JSON.stringify(
+          { error: error.name, status: error.status, message: error.message },
+          null,
+          2,
+        ),
+      )
+      process.exit(EXIT_AUTH_ERROR)
     }
     const label =
       error instanceof TypeError ? "Network Error" : (error as Error).name

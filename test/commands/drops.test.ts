@@ -186,6 +186,111 @@ describe("dropsCommand", () => {
     )
   })
 
+  describe("mint --send", () => {
+    const MINTER = "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+    const mintTx = {
+      to: "0x4444444444444444444444444444444444444444",
+      data: "0xfeed",
+      value: "0x2386f26fc10000",
+      chain: "base",
+    }
+
+    it("mint without --send never opens a wallet", async () => {
+      ctx.mockClient.post.mockResolvedValue(mintTx)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(["mint", "cool-cats", "--minter", MINTER], {
+        from: "user",
+      })
+
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(mintTx, null, 2),
+      )
+      expect(walletMock.createWalletFromEnv).not.toHaveBeenCalled()
+    })
+
+    it("sends from a wallet other than the minter and prints both", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.post.mockResolvedValue(mintTx)
+      const payer = "0x9999999999999999999999999999999999999999"
+      const wallet = evmWallet(payer)
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        ["mint", "cool-cats", "--minter", MINTER, "--quantity", "2", "--send"],
+        { from: "user" },
+      )
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/drops/cool-cats/mint",
+        { minter: MINTER, quantity: 2 },
+      )
+      expect(wallet.sendTransaction).toHaveBeenCalledWith({
+        to: mintTx.to,
+        data: mintTx.data,
+        value: "10000000000000000",
+        chainId: 8453,
+      })
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(
+          { hash: "0xhash", chain: "base", from: payer, minter: MINTER },
+          null,
+          2,
+        ),
+      )
+      expect(stderr.mock.calls.flat().join("\n")).toContain(
+        `Minting 2 from ${payer} to minter ${MINTER}`,
+      )
+    })
+
+    it("rejects a Solana wallet before building the transaction", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit")
+      })
+      walletMock.createWalletFromEnv.mockReturnValue({
+        name: "svm-mock",
+        chainType: "svm",
+        capabilities: {},
+        getAddress: async () => "So11111111111111111111111111111111111111112",
+        signTransaction: async () => ({ signedTransaction: "" }),
+      })
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(["mint", "cool-cats", "--minter", MINTER, "--send"], {
+          from: "user",
+        }),
+      ).rejects.toThrow("process.exit")
+
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+      expect(stderr.mock.calls.flat().join("\n")).toContain(
+        "drop mint requires an EVM wallet",
+      )
+    })
+
+    it("rejects a bad --quantity before opening a wallet", async () => {
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          [
+            "mint",
+            "cool-cats",
+            "--minter",
+            MINTER,
+            "--quantity",
+            "x",
+            "--send",
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("--quantity")
+
+      expect(walletMock.createWalletFromEnv).not.toHaveBeenCalled()
+    })
+  })
+
   it("cross-chain-mint posts payer, minter, quantity, and payment asset", async () => {
     ctx.mockClient.post.mockResolvedValue({
       transactions: [],
@@ -391,6 +496,251 @@ describe("dropsCommand", () => {
       expect(stderr.mock.calls.flat().join("\n")).toContain(
         "Sending publish transaction",
       )
+    })
+  })
+
+  describe("deploy and deploy-receipt", () => {
+    const deployTx = {
+      to: "0x2222222222222222222222222222222222222222",
+      data: "0xdeadbeef",
+      value: "0x0",
+      chain: "base",
+    }
+    const deployArgs = [
+      "deploy",
+      "--chain",
+      "base",
+      "--name",
+      "A",
+      "--symbol",
+      "A",
+      "--drop-type",
+      "seadrop_v2_erc1155_self_mint",
+      "--token-type",
+      "erc1155_clone",
+      "--sender",
+      OWNER,
+    ]
+
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    it("deploy without --send prints the transaction and never opens a wallet", async () => {
+      ctx.mockClient.post.mockResolvedValue(deployTx)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(deployArgs, { from: "user" })
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith("/api/v2/drops/deploy", {
+        chain: "base",
+        contract_name: "A",
+        contract_symbol: "A",
+        drop_type: "seadrop_v2_erc1155_self_mint",
+        token_type: "erc1155_clone",
+        sender: OWNER,
+      })
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(deployTx, null, 2),
+      )
+      expect(walletMock.createWalletFromEnv).not.toHaveBeenCalled()
+    })
+
+    it("deploy --send signs from --sender, passes value as decimal wei, and names the receipt step", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.post.mockResolvedValue({ ...deployTx, value: "0x10" })
+      const wallet = evmWallet(OWNER.toLowerCase())
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync([...deployArgs, "--send"], { from: "user" })
+
+      expect(wallet.sendTransaction).toHaveBeenCalledWith({
+        to: deployTx.to,
+        data: deployTx.data,
+        value: "16",
+        chainId: 8453,
+      })
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify({ hash: "0xhash", chain: "base" }, null, 2),
+      )
+      expect(stderr.mock.calls.flat().join("\n")).toContain(
+        "Next: opensea drops deploy-receipt base 0xhash --wait",
+      )
+    })
+
+    it("deploy --send refuses a wallet that is not --sender", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.post.mockResolvedValue(deployTx)
+      const wallet = evmWallet("0x9999999999999999999999999999999999999999")
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync([...deployArgs, "--send"], { from: "user" }),
+      ).rejects.toThrow(`is not the deploy sender ${OWNER}`)
+
+      expect(wallet.sendTransaction).not.toHaveBeenCalled()
+      expect(ctx.consoleSpy).not.toHaveBeenCalled()
+    })
+
+    it("deploy --send refuses a value that is not a number", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.post.mockResolvedValue({ ...deployTx, value: "lots" })
+      const wallet = evmWallet(OWNER)
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync([...deployArgs, "--send"], { from: "user" }),
+      ).rejects.toThrow("Drop transaction has an invalid value: lots")
+
+      expect(wallet.sendTransaction).not.toHaveBeenCalled()
+    })
+
+    it("deploy --send rejects a Solana wallet before building the transaction", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit")
+      })
+      walletMock.createWalletFromEnv.mockReturnValue({
+        name: "svm-mock",
+        chainType: "svm",
+        capabilities: {},
+        getAddress: async () => "So11111111111111111111111111111111111111112",
+        signTransaction: async () => ({ signedTransaction: "" }),
+      })
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync([...deployArgs, "--send"], { from: "user" }),
+      ).rejects.toThrow("process.exit")
+
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+      expect(stderr.mock.calls.flat().join("\n")).toContain(
+        "drop deploy requires an EVM wallet",
+      )
+    })
+
+    it("deploy-receipt without --wait fetches the receipt once", async () => {
+      ctx.mockClient.get.mockResolvedValue({ status: "pending" })
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(["deploy-receipt", "base", "0xabc"], {
+        from: "user",
+      })
+
+      expect(ctx.mockClient.get).toHaveBeenCalledTimes(1)
+      expect(ctx.mockClient.get).toHaveBeenCalledWith(
+        "/api/v2/drops/deploy/base/0xabc/receipt",
+      )
+    })
+
+    it("deploy-receipt --wait polls past a slugless success until the slug appears", async () => {
+      vi.useFakeTimers()
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation(() => undefined as never)
+      const done = {
+        status: "success",
+        contract_address: "0x3333333333333333333333333333333333333333",
+        chain: "base",
+        collection_slug: "my-drop",
+      }
+      ctx.mockClient.get
+        .mockResolvedValueOnce({ status: "pending" })
+        .mockResolvedValueOnce({ ...done, collection_slug: null })
+        .mockResolvedValueOnce(done)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      const run = cmd.parseAsync(
+        ["deploy-receipt", "base", "0xabc", "--wait"],
+        { from: "user" },
+      )
+      await vi.advanceTimersByTimeAsync(10_000)
+      await run
+
+      expect(ctx.mockClient.get).toHaveBeenCalledTimes(3)
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(JSON.stringify(done, null, 2))
+      expect(exitSpy).not.toHaveBeenCalled()
+    })
+
+    it("deploy-receipt --wait exits non-zero on a failed deploy", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation(() => undefined as never)
+      ctx.mockClient.get.mockResolvedValue({ status: "failed" })
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(["deploy-receipt", "base", "0xabc", "--wait"], {
+        from: "user",
+      })
+
+      expect(ctx.mockClient.get).toHaveBeenCalledTimes(1)
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(stderr.mock.calls.flat().join("\n")).toContain(
+        "Error: deploy 0xabc failed",
+      )
+    })
+
+    it("deploy-receipt --wait gives up after --wait-timeout and names the contract", async () => {
+      vi.useFakeTimers()
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.get.mockResolvedValue({
+        status: "success",
+        contract_address: "0x3333333333333333333333333333333333333333",
+        collection_slug: null,
+      })
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      const run = cmd.parseAsync(
+        [
+          "deploy-receipt",
+          "base",
+          "0xabc",
+          "--wait",
+          "--interval",
+          "5",
+          "--wait-timeout",
+          "12",
+        ],
+        { from: "user" },
+      )
+      const outcome = expect(run).rejects.toThrow(
+        "Timed out after 12000ms waiting for deploy 0xabc; the contract is at 0x3333333333333333333333333333333333333333",
+      )
+      await vi.advanceTimersByTimeAsync(12_000)
+      await outcome
+
+      // Polls at 0s, 5s, 10s and a last time at the 12s deadline.
+      expect(ctx.mockClient.get).toHaveBeenCalledTimes(4)
+    })
+
+    it("deploy-receipt --wait reports a still-pending status on timeout", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.get.mockResolvedValue({ status: "pending" })
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          ["deploy-receipt", "base", "0xabc", "--wait", "--wait-timeout", "0"],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("its status is still pending")
+    })
+
+    it("deploy-receipt rejects bad wait options before polling", async () => {
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          ["deploy-receipt", "base", "0xabc", "--wait", "--interval", "0"],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("--interval must be at least 1 second")
+
+      expect(ctx.mockClient.get).not.toHaveBeenCalled()
     })
   })
 

@@ -10,6 +10,17 @@ export interface OpenSeaClientConfig {
   retryBaseDelay?: number
   /** Scoped JWT token for wallet-authenticated endpoints. */
   authToken?: string
+  /**
+   * ISO time `authToken` expires at. With `refreshAuthToken`, a request made
+   * after it (less a 30s margin) refreshes the token first.
+   */
+  authTokenExpiresAt?: string
+  /**
+   * Replace `authToken` and return the new one. Called at most once per
+   * client: before a request when `authTokenExpiresAt` has passed, or when a
+   * request sent with `authToken` returns 401, which is then retried once.
+   */
+  refreshAuthToken?: (reason: "expired" | "unauthorized") => Promise<string>
 }
 
 export interface CommandOptions {

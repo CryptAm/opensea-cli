@@ -192,6 +192,28 @@ describe("OpenSeaCLI", () => {
         request,
       )
     })
+
+    it.each([
+      ["intervalMs", { intervalMs: 0 }, "intervalMs must be a positive number"],
+      [
+        "intervalMs",
+        { intervalMs: Number.NaN },
+        "intervalMs must be a positive number",
+      ],
+      [
+        "timeoutMs",
+        { timeoutMs: -1 },
+        "timeoutMs must be a non-negative number",
+      ],
+    ])("the wait helpers reject a bad %s before polling", async (_, options, message) => {
+      await expect(
+        sdk.drops.waitForDeployReceipt("base", "0xabc", options),
+      ).rejects.toThrow(message)
+      await expect(
+        sdk.drops.waitForMetadataIpfs("cool-cats", "run-1", options),
+      ).rejects.toThrow(message)
+      expect(mockGet).not.toHaveBeenCalled()
+    })
   })
 
   describe("nfts", () => {

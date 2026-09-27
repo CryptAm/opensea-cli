@@ -1,24 +1,17 @@
 import { AUTH_SCOPES } from "@opensea/api-types"
-import { linkWalletWithSiwx, OpenSeaOAuth } from "@opensea/sdk"
+import { linkWalletWithSiwx } from "@opensea/sdk"
 import {
   createWalletFromEnv,
   PrivateKeyAdapter,
 } from "@opensea/wallet-adapters"
 import { Command } from "commander"
-import {
-  DEFAULT_AUTH_BASE_URL,
-  resolveOAuthClientId,
-} from "../auth/oauth-config.js"
+import { DEFAULT_AUTH_BASE_URL } from "../auth/oauth-config.js"
 import {
   resolvePrivateKey,
   warnIfInlinePrivateKey,
 } from "../auth/private-key.js"
-import {
-  DEFAULT_TOKEN_TTL_SECONDS,
-  exchangeScopedToken,
-  loginWithSiwe,
-  refreshSiweSession,
-} from "../auth/siwe-login.js"
+import { refreshStoredToken } from "../auth/refresh.js"
+import { loginWithSiwe, refreshSiweSession } from "../auth/siwe-login.js"
 import {
   clearTokens,
   listTokens,
@@ -338,63 +331,22 @@ export function authCommand(
         console.error("No stored token to refresh")
         process.exit(1)
       }
-      const authBase = getAuthBaseUrl?.() ?? DEFAULT_AUTH_BASE_URL
-
-      if (token.authMethod === "oauth") {
-        const oauth = new OpenSeaOAuth({
-          clientId: resolveOAuthClientId(opts.clientId),
-          issuer: authBase,
-        })
-        const refreshed = await oauth.refresh(token.refreshToken)
-        saveToken({
-          accessToken: refreshed.accessToken,
-          refreshToken: refreshed.refreshToken,
-          expiresAt: refreshed.expiresAt.toISOString(),
-          requestedScopes: token.requestedScopes,
-          scopes: refreshed.scopes,
-          scopeSource: refreshed.scopeSource,
-          address: token.address,
-          authMethod: "oauth",
-        })
-        console.log(
-          formatOutput(
-            {
-              status: "refreshed",
-              address: token.address,
-              scopes: refreshed.scopes,
-              scope_source: refreshed.scopeSource,
-              expires_at: refreshed.expiresAt.toISOString(),
-            },
-            getFormat(),
-          ),
-        )
-        return
-      }
-
-      const baseUrl = getBaseUrl() ?? DEFAULT_BASE_URL
-      const data = await exchangeScopedToken(baseUrl, token.refreshToken)
-      const expiresAt = new Date(
-        Date.now() + (data.expiresIn ?? DEFAULT_TOKEN_TTL_SECONDS) * 1000,
+      const { token: refreshed, scopeSource } = await refreshStoredToken(
+        token,
+        {
+          apiBaseUrl: getBaseUrl() ?? DEFAULT_BASE_URL,
+          authBaseUrl: getAuthBaseUrl?.() ?? DEFAULT_AUTH_BASE_URL,
+          clientId: opts.clientId,
+        },
       )
-      const grantedScopes = data.tokenScopes ?? token.scopes
-      const scopeSource = data.tokenScopes
-        ? "token_exchange"
-        : (token.scopeSource ?? "unknown")
-      saveToken({
-        ...token,
-        accessToken: data.accessToken,
-        expiresAt: expiresAt.toISOString(),
-        scopes: grantedScopes,
-        ...(scopeSource === "unknown" ? {} : { scopeSource }),
-      })
       console.log(
         formatOutput(
           {
             status: "refreshed",
-            address: token.address,
-            scopes: grantedScopes,
+            address: refreshed.address,
+            scopes: refreshed.scopes,
             scope_source: scopeSource,
-            expires_at: expiresAt.toISOString(),
+            expires_at: refreshed.expiresAt,
           },
           getFormat(),
         ),

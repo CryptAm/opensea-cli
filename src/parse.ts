@@ -95,6 +95,51 @@ export function addChainOption(cmd: Command): Command {
   return cmd.option("--chain <chain>", "Filter by chain")
 }
 
+/**
+ * Hand a user-supplied program `--chain` to the subcommand being run.
+ *
+ * The program declares `--chain` too, and commander gives a program option to
+ * the program wherever it appears on the line, so a subcommand's own `--chain`
+ * is never set by the parser. Only a value the user supplied is forwarded:
+ * the program's `ethereum` default would turn "no filter" into "ethereum only"
+ * and satisfy a required chain the user never chose.
+ *
+ * This runs in a preAction hook, after commander's mandatory-option check, so
+ * a subcommand must declare `--chain` with `option` and check it with
+ * `requireChainOption`, never with `requiredOption`.
+ */
+export function forwardChainOption(
+  program: Command,
+  actionCommand: Command,
+): void {
+  if (actionCommand === program) return
+  if (!actionCommand.options.some(o => o.attributeName() === "chain")) return
+  const own = actionCommand.getOptionValueSource("chain")
+  if (own !== undefined && own !== "default") return
+  const source = program.getOptionValueSource("chain")
+  if (source === undefined || source === "default") return
+  actionCommand.setOptionValueWithSource(
+    "chain",
+    program.getOptionValue("chain"),
+    source,
+  )
+}
+
+/**
+ * Return the subcommand's `--chain`, or fail the way commander fails a missing
+ * required option. Use in place of `requiredOption("--chain ...")`; see
+ * `forwardChainOption`.
+ */
+export function requireChainOption(
+  chain: string | undefined,
+  cmd: Command,
+): string {
+  if (chain) return chain
+  return cmd.error("error: required option '--chain <chain>' not specified", {
+    code: "commander.missingMandatoryOptionValue",
+  })
+}
+
 // Re-stringify (rather than passing the raw input through) so whitespace and
 // key order are normalized before hitting the API.
 export function parseTraitsOption(value: string): string {

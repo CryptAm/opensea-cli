@@ -6,6 +6,7 @@ import {
   addPaginationOptions,
   parseIntOption,
   readJsonBodyOption,
+  requireChainOption,
 } from "../parse.js"
 import type {
   FavoriteResponse,
@@ -393,17 +394,20 @@ export function accountsCommand(
         "--contract-address <address>",
         "Contract address of the currency",
       )
-      .requiredOption("--chain <chain>", "Chain the currency lives on"),
+      // Required, but checked in the action: see requireChainOption.
+      .option("--chain <chain>", "Chain the currency lives on (required)"),
   ).action(
     async (
       address: string,
       options: {
         contractAddress: string
-        chain: string
+        chain?: string
         limit: string
         next?: string
       },
+      command: Command,
     ) => {
+      const chain = requireChainOption(options.chain, command)
       const client = getClient()
       await outputGet(
         client,
@@ -411,7 +415,7 @@ export function accountsCommand(
         `/api/v2/account/${address}/pnl/token-transfers`,
         {
           contract_address: options.contractAddress,
-          chain: options.chain,
+          chain,
           limit: parseIntOption(options.limit, "--limit"),
           next: options.next,
         },

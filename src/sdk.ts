@@ -99,7 +99,11 @@ import type {
   WalletPnlResponse,
   WalletVisibilityResponse,
 } from "./types/index.js"
-import type { TransactionResult, WalletAdapter } from "./wallet/index.js"
+import type {
+  EvmWalletAdapter,
+  TransactionResult,
+  WalletAdapter,
+} from "./wallet/index.js"
 import { requireEvmAdapter, resolveChainId } from "./wallet/index.js"
 
 function encodeTraits(traits?: TraitFilter[]): string | undefined {
@@ -305,6 +309,48 @@ class CollectionsAPI {
   }
 }
 
+/**
+ * Send a drop transaction from `wallet`. Drop endpoints return `value` as
+ * decimal or hex wei; the wallet gets decimal wei either way.
+ */
+function sendDropTransaction(
+  wallet: EvmWalletAdapter,
+  tx: { to: string; data: string; value: string; chain: string },
+  callbacks?: {
+    onSending?: (tx: { to: string; chain: string; chainId: number }) => void
+  },
+): Promise<TransactionResult> {
+  let value: string
+  try {
+    value = BigInt(tx.value).toString()
+  } catch {
+    throw new Error(`Drop transaction has an invalid value: ${tx.value}`)
+  }
+  const chainId = resolveChainId(tx.chain)
+  callbacks?.onSending?.({ to: tx.to, chain: tx.chain, chainId })
+  return wallet.sendTransaction({ to: tx.to, data: tx.data, value, chainId })
+}
+
+/** Poll interval and timeout for the drop wait helpers, validated. */
+function pollTiming(options?: { intervalMs?: number; timeoutMs?: number }): {
+  intervalMs: number
+  timeoutMs: number
+} {
+  const intervalMs = options?.intervalMs ?? 5_000
+  const timeoutMs = options?.timeoutMs ?? 600_000
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0) {
+    throw new RangeError(
+      `intervalMs must be a positive number, got ${intervalMs}`,
+    )
+  }
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
+    throw new RangeError(
+      `timeoutMs must be a non-negative number, got ${timeoutMs}`,
+    )
+  }
+  return { intervalMs, timeoutMs }
+}
+
 export class DropsAPI {
   constructor(private client: OpenSeaClient) {}
 
@@ -360,6 +406,84 @@ export class DropsAPI {
   }
 
   /**
+   * Sign and send a deploy transaction built by `deploy`. `sender` is the
+   * `sender` the deploy was requested for; a wallet with any other address is
+   * refused, since the API built the deploy for that address. The deploy
+   * response carries `value` as hex wei, and it is passed to the wallet as
+   * decimal wei like every other drop transaction.
+   */
+  async sendDeployTransaction(
+    tx: DropDeployResponse,
+    sender: string,
+    wallet: WalletAdapter,
+    callbacks?: {
+      onSending?: (tx: { to: string; chain: string; chainId: number }) => void
+    },
+  ): Promise<TransactionResult> {
+    const evmWallet = requireEvmAdapter(wallet, "drop deploy")
+    const address = await evmWallet.getAddress()
+    if (address.toLowerCase() !== sender.toLowerCase()) {
+      throw new Error(
+        `Wallet ${address} is not the deploy sender ${sender}. The deploy was built for ${sender}; send it from that wallet, or request a new deploy with the wallet's address as sender.`,
+      )
+    }
+    return sendDropTransaction(evmWallet, tx, callbacks)
+  }
+
+  /**
+   * Sign and send a mint transaction built by `mint`. Any EVM wallet can send
+   * it: the request's `minter` receives the tokens, whoever pays.
+   */
+  async sendMintTransaction(
+    tx: DropMintResponse,
+    wallet: WalletAdapter,
+    callbacks?: {
+      onSending?: (tx: { to: string; chain: string; chainId: number }) => void
+    },
+  ): Promise<TransactionResult> {
+    const evmWallet = requireEvmAdapter(wallet, "drop mint")
+    return sendDropTransaction(evmWallet, tx, callbacks)
+  }
+
+  /**
+   * Poll a deploy receipt until it reports a collection slug or a `failed`
+   * status, and return that receipt. A `success` receipt without a slug keeps
+   * polling, since the collection can materialize after the contract lands.
+   * Throws when `timeoutMs` passes first.
+   */
+  async waitForDeployReceipt(
+    chain: Chain,
+    txHash: string,
+    options?: {
+      intervalMs?: number
+      timeoutMs?: number
+      onProgress?: (receipt: DropDeployReceiptResponse) => void
+    },
+  ): Promise<DropDeployReceiptResponse> {
+    const { intervalMs, timeoutMs } = pollTiming(options)
+    const deadline = Date.now() + timeoutMs
+    for (;;) {
+      const receipt = await this.deployReceipt(chain, txHash)
+      options?.onProgress?.(receipt)
+      if (receipt.status === "failed" || receipt.collection_slug) {
+        return receipt
+      }
+      const remainingMs = deadline - Date.now()
+      if (remainingMs <= 0) {
+        const detail = receipt.contract_address
+          ? `the contract is at ${receipt.contract_address} but its collection slug has not appeared yet`
+          : `its status is still ${receipt.status}`
+        throw new Error(
+          `Timed out after ${timeoutMs}ms waiting for deploy ${txHash}; ${detail}`,
+        )
+      }
+      await new Promise(resolve =>
+        setTimeout(resolve, Math.min(intervalMs, remainingMs)),
+      )
+    }
+  }
+
+  /**
    * Build the transaction that publishes the drop's saved draft onchain. Send
    * it from `from`, the contract's onchain owner, with `sendTransaction`.
    */
@@ -397,14 +521,7 @@ export class DropsAPI {
         `Wallet ${address} is not the contract owner ${tx.from}. The transaction must be sent from ${tx.from}, or it reverts.`,
       )
     }
-    const chainId = resolveChainId(tx.chain)
-    callbacks?.onSending?.({ to: tx.to, chain: tx.chain, chainId })
-    return evmWallet.sendTransaction({
-      to: tx.to,
-      data: tx.data,
-      value: tx.value,
-      chainId,
-    })
+    return sendDropTransaction(evmWallet, tx, callbacks)
   }
 
   /** Start uploading the drop's item media and metadata to IPFS. */
@@ -438,8 +555,7 @@ export class DropsAPI {
       onProgress?: (progress: DropMetadataUploadProgressResponse) => void
     },
   ): Promise<DropMetadataUploadProgressResponse> {
-    const intervalMs = options?.intervalMs ?? 5_000
-    const timeoutMs = options?.timeoutMs ?? 600_000
+    const { intervalMs, timeoutMs } = pollTiming(options)
     const deadline = Date.now() + timeoutMs
     for (;;) {
       const progress = await this.getMetadataIpfsProgress(

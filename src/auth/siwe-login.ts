@@ -16,7 +16,7 @@ const TRUSTED_SIWE_ORIGINS = [
   "https://testnets-api.opensea.io",
 ]
 
-function isTrustedSiweOrigin(baseUrl: string): boolean {
+export function isTrustedSiweOrigin(baseUrl: string): boolean {
   let url: URL
   try {
     url = new URL(baseUrl)
@@ -109,6 +109,17 @@ export function sessionCookie(headers: Headers): string {
   return [...cookies].map(([name, value]) => `${name}=${value}`).join("; ")
 }
 
+/** A non-2xx response from the scoped token exchange endpoint. */
+export class TokenExchangeError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string,
+  ) {
+    super(`Token exchange failed (${status}): ${body}`)
+    this.name = "TokenExchangeError"
+  }
+}
+
 /**
  * Exchange a scoped token (PAT) for a short-lived JWT access token.
  */
@@ -126,7 +137,7 @@ export async function exchangeScopedToken(
   })
   if (!response.ok) {
     const body = await response.text().catch(() => "")
-    throw new Error(`Token exchange failed (${response.status}): ${body}`)
+    throw new TokenExchangeError(response.status, body)
   }
   return response.json() as Promise<ScopedTokenExchangeResponse>
 }

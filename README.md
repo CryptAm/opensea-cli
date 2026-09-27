@@ -70,8 +70,13 @@ opensea auth revoke
 Private-key login uses SIWE and requires an explicit `--scopes` list. The
 private key signs locally and is not stored. The CLI
 keeps the session needed to revoke the personal access token (PAT), and
-`api request` sends the stored wallet JWT alongside `OPENSEA_API_KEY`. Use
-`opensea auth refresh` after the JWT expires. For interactive login, run
+`api request` sends the stored wallet JWT alongside `OPENSEA_API_KEY`. When
+the stored JWT has expired, or a request with it returns 401, the CLI refreshes
+it once, prints a one-line notice to stderr, and continues. It does this only
+against OpenSea's own servers (not with `--base-url` or `--auth-base-url`), and
+`--no-auth-refresh` turns it off; `opensea auth refresh` runs it on demand. If
+the refresh token itself is refused, the error names the login command to run
+instead. For interactive login, run
 `opensea login` without `--private-key`. See the
 [wallet-auth guide](https://docs.opensea.io/reference/auth).
 
@@ -112,7 +117,7 @@ opensea --format table collections stats mfers
 | `listings` | Query listings and create listing or fulfillment actions |
 | `offers` | Query offers and create offer or fulfillment actions |
 | `orders` | Cancel orders offchain or create onchain cancellation actions |
-| `drops` | Query drops, build same-chain or cross-chain mint transactions, publish or unpublish a drop, and upload its files |
+| `drops` | Query drops, build same-chain or cross-chain mint transactions, deploy a drop contract, publish or unpublish a drop, and upload its files |
 | `transactions` | Poll transaction and cross-chain receipt status |
 | `events` | List marketplace events (sales, transfers, mints, etc.) |
 | `search` | Search collections, NFTs, tokens, and accounts |
@@ -125,7 +130,7 @@ opensea --format table collections stats mfers
 
 This table is a high-level summary; run `opensea --help` for the current command list and [docs/cli-reference.md](docs/cli-reference.md) for the full reference.
 
-Global options: `--api-key`, `--chain` (default: ethereum), `--format` (json/table/toon), `--base-url`
+Global options: `--api-key`, `--chain` (default: ethereum), `--format` (json/table/toon), `--base-url`. A `--chain` you pass, before or after the subcommand, reaches subcommands that take `--chain`; the `ethereum` default never does.
 
 ## Programmatic SDK
 
