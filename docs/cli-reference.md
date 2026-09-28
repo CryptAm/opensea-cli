@@ -15,9 +15,11 @@ Full command reference for all `opensea` CLI commands.
 ```
 
 A `--chain` you pass reaches every subcommand that takes `--chain` (such as
-`collections list`, `events list` or `drops deploy`), whether you put it before
-or after the subcommand. The `ethereum` default never does: a chain filter you
-leave out filters nothing, and a command that needs a chain fails without one.
+`collections list`, `events by-account` or `drops deploy`), whether you put it
+before or after the subcommand. The `ethereum` default never does: a chain
+filter you leave out filters nothing, and a command that needs a chain fails
+without one. `events list` has no chain filter and refuses a `--chain` you
+pass; use `events by-account --chain` or `events by-nft <chain>` instead.
 
 ## Authentication
 
@@ -243,7 +245,7 @@ opensea transactions receipt --request <receipt-request.json>
 ## Events
 
 ```bash
-opensea events list [--event-type <type>] [--after <timestamp>] [--before <timestamp>] [--chain <chain>] [--limit <n>] [--next <cursor>]
+opensea events list [--event-type <type>] [--after <timestamp>] [--before <timestamp>] [--limit <n>] [--next <cursor>]
 opensea events by-account <address> [--event-type <type>] [--chain <chain>] [--limit <n>] [--next <cursor>]
 opensea events by-collection <slug> [--event-type <type>] [--limit <n>] [--next <cursor>]
 opensea events by-nft <chain> <contract> <token-id> [--event-type <type>] [--limit <n>] [--next <cursor>]

@@ -1,5 +1,21 @@
 # @opensea/cli
 
+## 2.9.1
+
+### Patch Changes
+
+- c5aada3: `events list` no longer accepts a chain filter. `GET /api/v2/events` has no `chain` parameter and returns events from every chain whatever is sent, so the flag never filtered anything. `opensea events list --chain <chain>` and `opensea --chain <chain> events list` now exit with an error that points to `events by-account <address> --chain <chain>` and `events by-nft <chain> <contract> <token-id>`, which do filter by chain. The programmatic `EventsAPI.list` stops sending `chain`, and its `chain` option is deprecated.
+
+  Correction to 2.9.0: its notes list `events list` among the commands whose `--chain` filter was restored. That filter never applied on this endpoint; only `collections list` and `events by-account` filter by chain.
+
+- f5676f0: `opensea tokens holders` now describes the distribution it returns: total holders, the share of eligible supply held by the top 250, and a health score and label.
+- Updated dependencies [6ffe0c9]
+- Updated dependencies [e7882a8]
+- Updated dependencies [a1e4356]
+- Updated dependencies [f5676f0]
+  - @opensea/api-types@0.14.2
+  - @opensea/sdk@12.10.2
+
 ## 2.9.0
 
 ### Minor Changes

@@ -1,4 +1,4 @@
-import { Command } from "commander"
+import { Command, Option } from "commander"
 import type { OpenSeaClient } from "../client.js"
 import type { OutputFormat } from "../output.js"
 import { outputGet } from "../output.js"
@@ -17,32 +17,40 @@ export function eventsCommand(
   const cmd = new Command("events").description("Query marketplace events")
 
   addPaginationOptions(
-    addChainOption(
-      cmd
-        .command("list")
-        .description("List events")
-        .option(
-          "--event-type <type>",
-          "Event type (sale, transfer, mint, listing, offer, trait_offer, collection_offer)",
-        )
-        .option(
-          "--after <timestamp>",
-          "Filter events after this Unix timestamp",
-        )
-        .option(
-          "--before <timestamp>",
-          "Filter events before this Unix timestamp",
-        ),
-    ),
+    cmd
+      .command("list")
+      .description("List events")
+      .option(
+        "--event-type <type>",
+        "Event type (sale, transfer, mint, listing, offer, trait_offer, collection_offer)",
+      )
+      .option("--after <timestamp>", "Filter events after this Unix timestamp")
+      .option(
+        "--before <timestamp>",
+        "Filter events before this Unix timestamp",
+      )
+      // GET /api/v2/events has no chain filter. The option stays declared,
+      // hidden, so a --chain in either position reaches this action and is
+      // refused rather than silently returning events from every chain.
+      .addOption(new Option("--chain <chain>").hideHelp()),
   ).action(
-    async (options: {
-      eventType?: string
-      after?: string
-      before?: string
-      chain?: string
-      limit: string
-      next?: string
-    }) => {
+    async (
+      options: {
+        eventType?: string
+        after?: string
+        before?: string
+        chain?: string
+        limit: string
+        next?: string
+      },
+      command: Command,
+    ) => {
+      if (options.chain !== undefined) {
+        command.error(
+          "error: events list cannot filter by chain, because the events endpoint has no chain filter. Use 'opensea events by-account <address> --chain <chain>' or 'opensea events by-nft <chain> <contract> <token-id>' instead.",
+          { code: "opensea.unsupportedChainFilter" },
+        )
+      }
       const client = getClient()
       await outputGet(client, getFormat(), "/api/v2/events", {
         event_type: options.eventType,
@@ -52,7 +60,6 @@ export function eventsCommand(
         before: options.before
           ? parseIntOption(options.before, "--before")
           : undefined,
-        chain: options.chain,
         limit: parseIntOption(options.limit, "--limit"),
         next: options.next,
       })

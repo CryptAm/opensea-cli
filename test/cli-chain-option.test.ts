@@ -155,7 +155,6 @@ describe("subcommand --chain through the full program", () => {
   describe("--chain filters", () => {
     it.each([
       [["collections", "list"], "/api/v2/collections"],
-      [["events", "list"], "/api/v2/events"],
       [
         ["events", "by-account", "0x1111111111111111111111111111111111111111"],
         "/api/v2/events/accounts/0x1111111111111111111111111111111111111111",
@@ -174,6 +173,38 @@ describe("subcommand --chain through the full program", () => {
 
       await run("collections", "list")
 
+      expect(requestedUrl().searchParams.has("chain")).toBe(false)
+    })
+  })
+
+  // GET /api/v2/events has no chain parameter and returns every chain's
+  // events whatever is sent, so a chain the user asks for is refused.
+  describe("events list", () => {
+    it.each([
+      ["after the subcommand", ["events", "list", "--chain", "base"]],
+      ["before the subcommand", ["--chain", "base", "events", "list"]],
+    ])("refuses --chain placed %s", async (_, argv) => {
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true)
+      vi.spyOn(process, "exit").mockImplementation(() => {
+        throw new Error("process.exit")
+      })
+
+      await expect(run(...argv)).rejects.toThrow("process.exit")
+
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(stderr.mock.calls.flat().join("")).toContain(
+        "events list cannot filter by chain",
+      )
+    })
+
+    it("runs without --chain and sends no chain", async () => {
+      respondWith({ asset_events: [] })
+
+      await run("events", "list")
+
+      expect(requestedUrl().pathname).toBe("/api/v2/events")
       expect(requestedUrl().searchParams.has("chain")).toBe(false)
     })
   })

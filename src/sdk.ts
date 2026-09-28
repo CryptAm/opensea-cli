@@ -904,6 +904,11 @@ class EventsAPI {
     before?: number
     limit?: number
     next?: string
+    /**
+     * @deprecated Ignored and not sent. `GET /api/v2/events` has no `chain`
+     * parameter, so it never filtered. Use `byAccount` with `chain`, or
+     * `byNFT`, for chain-scoped events.
+     */
     chain?: Chain
   }): Promise<{ asset_events: AssetEvent[]; next?: string }> {
     return this.client.get("/api/v2/events", {
@@ -912,7 +917,6 @@ class EventsAPI {
       before: options?.before,
       limit: options?.limit,
       next: options?.next,
-      chain: options?.chain,
     })
   }
 

@@ -458,7 +458,6 @@ describe("OpenSeaCLI", () => {
         before: undefined,
         limit: 10,
         next: undefined,
-        chain: undefined,
       })
     })
 
@@ -471,8 +470,15 @@ describe("OpenSeaCLI", () => {
         before: undefined,
         limit: undefined,
         next: undefined,
-        chain: undefined,
       })
+    })
+
+    it("list does not send chain, which GET /api/v2/events ignores", async () => {
+      mockGet.mockResolvedValue({ asset_events: [] })
+      await sdk.events.list({ chain: "base", limit: 10 })
+      const params = mockGet.mock.calls[0][1]
+      expect(params).toMatchObject({ limit: 10 })
+      expect(params).not.toHaveProperty("chain")
     })
 
     it("byAccount calls correct endpoint", async () => {

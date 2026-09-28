@@ -266,7 +266,7 @@ export function tokensCommand(
     cmd
       .command("holders")
       .description(
-        "Get paginated holders for a token (with aggregate distribution health)",
+        "Get paginated holders for a token, with its distribution: total holders, the share of eligible supply held by the top 250, and a health score and label",
       )
       .argument("<chain>", "Chain")
       .argument("<address>", "Token contract address"),

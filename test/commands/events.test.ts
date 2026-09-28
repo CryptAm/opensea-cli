@@ -27,19 +27,43 @@ describe("eventsCommand", () => {
     ctx.mockClient.get.mockResolvedValue({ asset_events: [] })
 
     const cmd = eventsCommand(ctx.getClient, ctx.getFormat)
-    await cmd.parseAsync(
-      ["list", "--event-type", "sale", "--limit", "5", "--chain", "ethereum"],
-      { from: "user" },
-    )
+    await cmd.parseAsync(["list", "--event-type", "sale", "--limit", "5"], {
+      from: "user",
+    })
 
     expect(ctx.mockClient.get).toHaveBeenCalledWith(
       "/api/v2/events",
       expect.objectContaining({
         event_type: "sale",
         limit: 5,
-        chain: "ethereum",
       }),
     )
+    expect(ctx.mockClient.get.mock.calls[0][1]).not.toHaveProperty("chain")
+  })
+
+  it("list subcommand refuses --chain instead of sending an ignored filter", async () => {
+    const cmd = eventsCommand(ctx.getClient, ctx.getFormat)
+    cmd.exitOverride()
+    cmd.commands.find(c => c.name() === "list")?.exitOverride()
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true)
+
+    await expect(
+      cmd.parseAsync(["list", "--chain", "base"], { from: "user" }),
+    ).rejects.toMatchObject({ code: "opensea.unsupportedChainFilter" })
+
+    expect(ctx.mockClient.get).not.toHaveBeenCalled()
+    const message = stderr.mock.calls.flat().join("")
+    expect(message).toContain("events list cannot filter by chain")
+    expect(message).toContain("events by-account <address> --chain <chain>")
+    expect(message).toContain("events by-nft <chain>")
+  })
+
+  it("list help does not advertise --chain", () => {
+    const cmd = eventsCommand(ctx.getClient, ctx.getFormat)
+    const list = cmd.commands.find(c => c.name() === "list")
+    expect(list?.helpInformation()).not.toContain("--chain")
   })
 
   it("list subcommand parses after/before timestamps", async () => {
