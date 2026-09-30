@@ -334,12 +334,28 @@ export type DropTransactionResponse = Schemas["DropTransactionResponse"]
 export type DropMetadataUploadResponse = Schemas["DropMetadataUploadResponse"]
 export type DropMetadataUploadProgressResponse =
   Schemas["DropMetadataUploadProgressResponse"]
+export type DropItemsPaginatedResponse = Schemas["DropItemsPaginatedResponse"]
 
 export type ModifyCollectionRequest = Schemas["ModifyCollectionRequest"]
 export type UpdateCollectionMetadataRequest =
   Schemas["UpdateCollectionMetadataRequest"]
 export type SetCollectionVisibilityRequest =
   Schemas["SetCollectionVisibilityRequest"]
+export type CollectionPageMetadataResponse =
+  Schemas["CollectionPageMetadataResponse"]
+export type SetCollectionPricingCurrencyRequest =
+  Schemas["SetCollectionPricingCurrencyRequest"]
+export type SetCollectionPricingCurrencyResponse =
+  Schemas["SetCollectionPricingCurrencyResponse"]
+export type CreatorFeeEnforcementStatusResponse =
+  Schemas["CreatorFeeEnforcementStatusResponse"]
+export type SetCreatorFeeEnforcementRequest =
+  Schemas["SetCreatorFeeEnforcementRequest"]
+export type CollectionTransactionResponse =
+  Schemas["CollectionTransactionResponse"]
+export type CollectionTransactionsResponse =
+  Schemas["CollectionTransactionsResponse"]
+export type CollectionRefreshResponse = Schemas["CollectionRefreshResponse"]
 
 // ── Tool Registry types ─────────────────────────────────────────────
 

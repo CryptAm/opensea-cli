@@ -112,7 +112,7 @@ opensea --format table collections stats mfers
 
 | Command | Description |
 |---|---|
-| `collections` | Get, list, stats, and traits for NFT collections |
+| `collections` | Get, list, stats, and traits for NFT collections; manage a collection page, its pricing currency and creator fee enforcement |
 | `nfts` | Get, list, refresh metadata, and contract details for NFTs |
 | `listings` | Query listings and create listing or fulfillment actions |
 | `offers` | Query offers and create offer or fulfillment actions |

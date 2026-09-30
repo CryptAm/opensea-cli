@@ -118,6 +118,56 @@ opensea collections traits <slug>
 
 `--order-by` values: `created_date`, `one_day_change`, `seven_day_volume`, `seven_day_change`, `num_owners`, `market_cap`
 
+### Managing a collection page
+
+These need a wallet token with `write:collections` (`opensea auth login`) from
+a collection editor, except `creator-fee-enforcement`, which reads public state
+with the API key alone.
+
+```bash
+opensea collections get-metadata <slug>
+opensea collections update-metadata <slug> --body <path>
+opensea collections upload-page-media <slug> <placement> --content-type <mime> [--file <path>]
+opensea collections set-pricing-currency <slug> --stablecoin <true|false>
+opensea collections creator-fee-enforcement <slug>
+opensea collections set-creator-fee-enforcement <slug> --enabled <true|false> [--send] [--wallet-provider <provider>]
+opensea collections refresh <slug>
+```
+
+`get-metadata` prints the saved page (hero, about, overview) in the shape of
+the `update-metadata` body, plus the page's preview URL. To keep a saved image
+or video in an update, send its url back as the token. A `mux_video` item has
+no url, so leave out the field that holds it instead.
+
+`upload-page-media` takes a placement of `hero_desktop`, `hero_mobile`,
+`about_preview`, `about_section`, `overview`, `overview_background` or `team`,
+and any image type or `video/mp4` up to 50 MB. Without `--file` it prints the
+upload context, for `opensea drops upload-file`. With `--file` it uploads the
+file and prints `{"token": ...}`. Pass the token in `update-metadata` as
+`{ "image": { "token": ... } }` or `{ "video": { "token": ... } }`, matching
+the file's type:
+
+```bash
+token=$(opensea collections upload-page-media my-drop hero_desktop \
+  --content-type video/mp4 --file hero.mp4 | jq -r .token)
+```
+
+`set-pricing-currency --stablecoin true` prices secondary sales in the chain's
+USD stablecoin (USDG on Robinhood Chain), `false` in its native currency. The
+response's `workflow_id` is null when nothing needed to change.
+
+`set-creator-fee-enforcement` prints the transactions that set or remove
+OpenSea's transfer validator, in order. The list is empty when the contract is
+already in that state. Each transaction's `from` is the contract's onchain
+owner. With `--send` it signs and sends them in order with the configured EVM
+wallet, writes each hash to stderr as it is sent, prints them all at the end,
+and it refuses before sending anything when the
+wallet is not every transaction's `from`. `creator-fee-enforcement` shows
+whether enforcement is on and whether the contract supports it.
+
+`refresh` queues a refresh of the collection's metadata from its contract's
+`contractURI()`. It keeps page content the contract does not set.
+
 ## NFTs
 
 ```bash
@@ -166,9 +216,13 @@ The action commands work across EVM chains and Solana. For Solana, preserve base
 ```bash
 opensea drops list [--type <type>] [--chains <chains>] [--limit <n>] [--next <cursor>]
 opensea drops get <slug>
+opensea drops items <slug> [--limit <n>] [--next <cursor>]
 opensea drops mint <slug> --minter <address> [--quantity <n>] [--send] [--wallet-provider <provider>]
 opensea drops cross-chain-mint <slug> --payer <address> --minter <address> --payment-chain <chain> --payment-token <address> [--quantity <n>]
 ```
+
+`items` lists the drop's saved items, a draft's included, and needs a wallet
+token with `write:drops` from a collection editor.
 
 `mint` prints a ready-to-sign transaction. With `--send` it signs and sends it
 with the configured EVM wallet, which pays, and prints the hash, the chain, the

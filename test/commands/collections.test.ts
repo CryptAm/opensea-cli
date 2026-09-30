@@ -1,9 +1,42 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import type { EvmWalletAdapter } from "@opensea/wallet-adapters"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { collectionsCommand } from "../../src/commands/collections.js"
 import { type CommandTestContext, createCommandTestContext } from "../mocks.js"
+
+const walletMock = vi.hoisted(() => ({ createWalletFromEnv: vi.fn() }))
+
+vi.mock("../../src/wallet/index.js", async importOriginal => ({
+  ...(await importOriginal<object>()),
+  createWalletFromEnv: walletMock.createWalletFromEnv,
+}))
+
+const OWNER = "0xAbCdEf0000000000000000000000000000000001"
+
+const enforcementTx = {
+  to: "0x2222222222222222222222222222222222222222",
+  from: OWNER,
+  data: "0xa9fcfb33",
+  value: "0",
+  chain: "base",
+}
+
+function evmWallet(address: string): EvmWalletAdapter {
+  return {
+    name: "mock",
+    chainType: "evm",
+    capabilities: {
+      signMessage: true,
+      signTypedData: false,
+      managedGas: false,
+      managedNonce: false,
+    },
+    getAddress: vi.fn(async () => address),
+    sendTransaction: vi.fn(async () => ({ hash: "0xhash" })),
+  } as EvmWalletAdapter
+}
 
 function writeTempJson(data: unknown): string {
   const dir = mkdtempSync(join(tmpdir(), "cli-test-"))
@@ -17,6 +50,7 @@ describe("collectionsCommand", () => {
 
   beforeEach(() => {
     ctx = createCommandTestContext()
+    walletMock.createWalletFromEnv.mockReset()
   })
 
   afterEach(() => {
@@ -159,6 +193,316 @@ describe("collectionsCommand", () => {
 
     expect(ctx.mockClient.post).toHaveBeenCalledWith(
       "/api/v2/collections/cool-cats/images/logo?content_type=image%2Fpng",
+    )
+  })
+
+  it("get-metadata reads the saved page", async () => {
+    const page = { hero: null, about: null, overview: null }
+    ctx.mockClient.get.mockResolvedValue(page)
+
+    const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(["get-metadata", "cool-cats"], { from: "user" })
+
+    expect(ctx.mockClient.get).toHaveBeenCalledWith(
+      "/api/v2/collections/cool-cats/metadata",
+    )
+    expect(ctx.consoleSpy).toHaveBeenCalledWith(JSON.stringify(page, null, 2))
+  })
+
+  describe("upload-page-media", () => {
+    const context = {
+      url: "https://uploads.example.com/",
+      method: "POST",
+      fields: { key: "collection/cool-cats/hero.mp4" },
+      token: "page-token",
+    }
+
+    it("without --file prints the upload context for the placement", async () => {
+      ctx.mockClient.post.mockResolvedValue(context)
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        [
+          "upload-page-media",
+          "cool-cats",
+          "hero_desktop",
+          "--content-type",
+          "video/mp4",
+        ],
+        { from: "user" },
+      )
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/collections/cool-cats/media/hero_desktop?content_type=video%2Fmp4",
+      )
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(context, null, 2),
+      )
+    })
+
+    it("with --file uploads the file and prints only the token", async () => {
+      ctx.mockClient.post.mockResolvedValue(context)
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValue(new Response(null, { status: 204 }))
+      const dir = mkdtempSync(join(tmpdir(), "cli-test-"))
+      const file = join(dir, "hero.mp4")
+      writeFileSync(file, new Uint8Array([1, 2, 3]))
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      try {
+        await cmd.parseAsync(
+          [
+            "upload-page-media",
+            "cool-cats",
+            "hero_desktop",
+            "--content-type",
+            "video/mp4",
+            "--file",
+            file,
+          ],
+          { from: "user" },
+        )
+      } finally {
+        rmSync(dir, { recursive: true, force: true })
+      }
+
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit]
+      expect(url).toBe(context.url)
+      const form = init.body as FormData
+      expect([...form.keys()]).toEqual(["key", "file"])
+      expect((form.get("file") as File).name).toBe("hero.mp4")
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify({ token: "page-token" }, null, 2),
+      )
+    })
+
+    it("reads --file before requesting an upload", async () => {
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          [
+            "upload-page-media",
+            "cool-cats",
+            "hero_desktop",
+            "--content-type",
+            "video/mp4",
+            "--file",
+            join(tmpdir(), "does-not-exist-page-media.mp4"),
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("Could not read --file")
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+    })
+  })
+
+  it("set-pricing-currency posts use_stablecoin", async () => {
+    ctx.mockClient.post.mockResolvedValue({ success: true, workflow_id: null })
+
+    const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(
+      ["set-pricing-currency", "cool-cats", "--stablecoin", "false"],
+      { from: "user" },
+    )
+
+    expect(ctx.mockClient.post).toHaveBeenCalledWith(
+      "/api/v2/collections/cool-cats/pricing_currency",
+      { use_stablecoin: false },
+    )
+  })
+
+  it("set-pricing-currency rejects a non-boolean --stablecoin value", async () => {
+    const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+    await expect(
+      cmd.parseAsync(
+        ["set-pricing-currency", "cool-cats", "--stablecoin", "usdg"],
+        { from: "user" },
+      ),
+    ).rejects.toThrow("--stablecoin must be 'true' or 'false'")
+    expect(ctx.mockClient.post).not.toHaveBeenCalled()
+  })
+
+  it("creator-fee-enforcement reads the enforcement state", async () => {
+    const state = { enabled: false, eligible: true }
+    ctx.mockClient.get.mockResolvedValue(state)
+
+    const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(["creator-fee-enforcement", "cool-cats"], {
+      from: "user",
+    })
+
+    expect(ctx.mockClient.get).toHaveBeenCalledWith(
+      "/api/v2/collections/cool-cats/creator_fee_enforcement",
+    )
+    expect(ctx.consoleSpy).toHaveBeenCalledWith(JSON.stringify(state, null, 2))
+  })
+
+  describe("set-creator-fee-enforcement", () => {
+    it("without --send prints the transactions and never opens a wallet", async () => {
+      const built = { transactions: [enforcementTx] }
+      ctx.mockClient.post.mockResolvedValue(built)
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        ["set-creator-fee-enforcement", "cool-cats", "--enabled", "true"],
+        { from: "user" },
+      )
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/collections/cool-cats/creator_fee_enforcement",
+        { enabled: true },
+      )
+      expect(walletMock.createWalletFromEnv).not.toHaveBeenCalled()
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(built, null, 2),
+      )
+    })
+
+    it("--send signs every transaction in order from the owner", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      const second = { ...enforcementTx, data: "0x0badf00d" }
+      ctx.mockClient.post.mockResolvedValue({
+        transactions: [enforcementTx, second],
+      })
+      const wallet = evmWallet(OWNER.toLowerCase())
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        [
+          "set-creator-fee-enforcement",
+          "cool-cats",
+          "--enabled",
+          "false",
+          "--send",
+        ],
+        { from: "user" },
+      )
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/collections/cool-cats/creator_fee_enforcement",
+        { enabled: false },
+      )
+      expect(
+        vi.mocked(wallet.sendTransaction).mock.calls.map(([tx]) => tx.data),
+      ).toEqual(["0xa9fcfb33", "0x0badf00d"])
+      expect(wallet.sendTransaction).toHaveBeenCalledWith({
+        to: enforcementTx.to,
+        data: enforcementTx.data,
+        value: "0",
+        chainId: 8453,
+      })
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify({ hashes: ["0xhash", "0xhash"] }, null, 2),
+      )
+    })
+
+    it("--send reports each sent hash, so a later failure does not hide earlier ones", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.post.mockResolvedValue({
+        transactions: [enforcementTx, { ...enforcementTx, data: "0x0badf00d" }],
+      })
+      const wallet = evmWallet(OWNER)
+      vi.mocked(wallet.sendTransaction)
+        .mockResolvedValueOnce({ hash: "0xfirst" })
+        .mockRejectedValueOnce(new Error("nonce too low"))
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          [
+            "set-creator-fee-enforcement",
+            "cool-cats",
+            "--enabled",
+            "true",
+            "--send",
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("nonce too low")
+
+      expect(stderr.mock.calls.flat().join("\n")).toContain("Sent 0xfirst")
+      expect(ctx.consoleSpy).not.toHaveBeenCalled()
+    })
+
+    it("--send refuses before sending anything when any transaction is from another address", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {})
+      const other = "0x9999999999999999999999999999999999999999"
+      ctx.mockClient.post.mockResolvedValue({
+        transactions: [enforcementTx, { ...enforcementTx, from: other }],
+      })
+      const wallet = evmWallet(OWNER)
+      walletMock.createWalletFromEnv.mockReturnValue(wallet)
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          [
+            "set-creator-fee-enforcement",
+            "cool-cats",
+            "--enabled",
+            "true",
+            "--send",
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow(`is not the contract owner ${other}`)
+      expect(wallet.sendTransaction).not.toHaveBeenCalled()
+    })
+
+    it("--send with nothing to change says so without opening a wallet", async () => {
+      const stderr = vi.spyOn(console, "error").mockImplementation(() => {})
+      ctx.mockClient.post.mockResolvedValue({ transactions: [] })
+
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        [
+          "set-creator-fee-enforcement",
+          "cool-cats",
+          "--enabled",
+          "false",
+          "--send",
+        ],
+        { from: "user" },
+      )
+
+      expect(walletMock.createWalletFromEnv).not.toHaveBeenCalled()
+      expect(stderr.mock.calls.flat().join("\n")).toContain(
+        "already off; nothing to send",
+      )
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify({ hashes: [] }, null, 2),
+      )
+    })
+
+    it("rejects a non-boolean --enabled value before any request", async () => {
+      const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(
+          ["set-creator-fee-enforcement", "cool-cats", "--enabled", "yes"],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("--enabled must be 'true' or 'false'")
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+    })
+  })
+
+  it("refresh posts to the refresh endpoint", async () => {
+    ctx.mockClient.post.mockResolvedValue({ success: true })
+
+    const cmd = collectionsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(["refresh", "cool-cats"], { from: "user" })
+
+    expect(ctx.mockClient.post).toHaveBeenCalledWith(
+      "/api/v2/collections/cool-cats/refresh",
+    )
+    expect(ctx.consoleSpy).toHaveBeenCalledWith(
+      JSON.stringify({ success: true }, null, 2),
     )
   })
 })

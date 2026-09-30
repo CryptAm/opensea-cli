@@ -94,6 +94,23 @@ describe("dropsCommand", () => {
     expect(subcommands).toContain("cross-chain-mint")
   })
 
+  it("items lists a drop's saved items with pagination", async () => {
+    const page = { items: [], next: "cursor-2" }
+    ctx.mockClient.get.mockResolvedValue(page)
+
+    const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+    await cmd.parseAsync(
+      ["items", "cool-cats", "--limit", "5", "--next", "cursor-1"],
+      { from: "user" },
+    )
+
+    expect(ctx.mockClient.get).toHaveBeenCalledWith(
+      "/api/v2/drops/cool-cats/items",
+      { limit: 5, next: "cursor-1" },
+    )
+    expect(ctx.consoleSpy).toHaveBeenCalledWith(JSON.stringify(page, null, 2))
+  })
+
   it("list subcommand passes options", async () => {
     ctx.mockClient.get.mockResolvedValue({ drops: [] })
 

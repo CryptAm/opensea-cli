@@ -62,7 +62,7 @@ async function readUploadContextJson(source: string): Promise<unknown> {
   }
 }
 
-async function openEvmWallet(
+export async function openEvmWallet(
   walletProvider: string | undefined,
   action: string,
 ): Promise<{ wallet: EvmWalletAdapter; address: string }> {
@@ -287,6 +287,22 @@ export function dropsCommand(
       })
     },
   )
+
+  addPaginationOptions(
+    cmd
+      .command("items")
+      .description(
+        "List a drop's saved items, including a draft's (write:drops, collection editor)",
+      )
+      .argument("<slug>", "Collection slug"),
+  ).action(async (slug: string, options: { limit: string; next?: string }) => {
+    const drops = new DropsAPI(getClient())
+    const result = await drops.items(slug, {
+      limit: parseIntOption(options.limit, "--limit"),
+      next: options.next,
+    })
+    console.log(formatOutput(result, getFormat()))
+  })
 
   cmd
     .command("get")

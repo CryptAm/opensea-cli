@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { basename } from "node:path"
 import { Command } from "commander"
 import type { OpenSeaClient } from "../client.js"
 import type { OutputFormat } from "../output.js"
@@ -9,6 +11,7 @@ import {
   parseIntOption,
   readJsonBodyOption,
 } from "../parse.js"
+import { CollectionsAPI } from "../sdk.js"
 import type {
   BatchCollectionsRequest,
   Chain,
@@ -19,6 +22,26 @@ import type {
   SetCollectionVisibilityRequest,
   UpdateCollectionMetadataRequest,
 } from "../types/index.js"
+import { uploadToContext } from "../upload.js"
+import { WALLET_PROVIDERS } from "../wallet/index.js"
+import { openEvmWallet } from "./drops.js"
+
+const PAGE_MEDIA_PLACEMENTS = [
+  "hero_desktop",
+  "hero_mobile",
+  "about_preview",
+  "about_section",
+  "overview",
+  "overview_background",
+  "team",
+]
+
+function parseBooleanOption(value: string, flag: string): boolean {
+  if (value !== "true" && value !== "false") {
+    throw new Error(`${flag} must be 'true' or 'false'`)
+  }
+  return value === "true"
+}
 
 export function collectionsCommand(
   getClient: () => OpenSeaClient,
@@ -325,6 +348,18 @@ export function collectionsCommand(
     })
 
   cmd
+    .command("get-metadata")
+    .description(
+      "Get a collection's saved page (hero, about, overview) in the update-metadata body shape, with its preview URL",
+    )
+    .argument("<slug>", "Collection slug")
+    .action(async (slug: string) => {
+      const collections = new CollectionsAPI(getClient())
+      const result = await collections.pageMetadata(slug)
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
     .command("set-visibility")
     .description("Show or hide a collection")
     .argument("<slug>", "Collection slug")
@@ -350,10 +385,13 @@ export function collectionsCommand(
   cmd
     .command("upload-image")
     .description(
-      "Request a presigned upload for a collection image (logo or banner)",
+      "Request a presigned upload for a collection logo or banner image",
     )
     .argument("<slug>", "Collection slug")
-    .argument("<image_type>", "Image type (e.g. logo, banner)")
+    .argument(
+      "<image_type>",
+      "Image type: profile_picture (the logo) or banner_image",
+    )
     .requiredOption(
       "--content-type <mime>",
       "MIME type of the image to upload (e.g. image/png)",
@@ -371,6 +409,165 @@ export function collectionsCommand(
         console.log(formatOutput(result, getFormat()))
       },
     )
+
+  cmd
+    .command("upload-page-media")
+    .description(
+      "Request an upload for a collection page image or MP4 video; with --file, upload it and print the token for update-metadata",
+    )
+    .argument("<slug>", "Collection slug")
+    .argument(
+      "<placement>",
+      `Page placement (${PAGE_MEDIA_PLACEMENTS.join(", ")})`,
+    )
+    .requiredOption(
+      "--content-type <mime>",
+      "MIME type of the file (an image type, or video/mp4)",
+    )
+    .option("--file <path>", "Upload this file and print its token")
+    .action(
+      async (
+        slug: string,
+        placement: string,
+        options: { contentType: string; file?: string },
+      ) => {
+        let bytes: Buffer | undefined
+        if (options.file) {
+          try {
+            bytes = readFileSync(options.file)
+          } catch (err) {
+            throw new Error(
+              `Could not read --file '${options.file}': ${(err as Error).message}`,
+            )
+          }
+        }
+        const collections = new CollectionsAPI(getClient())
+        const context = await collections.createPageMediaUpload(
+          slug,
+          placement,
+          options.contentType,
+        )
+        if (!bytes || !options.file) {
+          console.log(formatOutput(context, getFormat()))
+          return
+        }
+        const result = await uploadToContext(
+          context,
+          new Blob([new Uint8Array(bytes)], { type: options.contentType }),
+          { filename: basename(options.file) },
+        )
+        console.log(formatOutput(result, getFormat()))
+      },
+    )
+
+  cmd
+    .command("set-pricing-currency")
+    .description(
+      "Price secondary sales in the chain's USD stablecoin (USDG on Robinhood Chain) or its native currency",
+    )
+    .argument("<slug>", "Collection slug")
+    .requiredOption(
+      "--stablecoin <boolean>",
+      "true for the USD stablecoin, false for the native currency",
+    )
+    .action(async (slug: string, options: { stablecoin: string }) => {
+      const useStablecoin = parseBooleanOption(
+        options.stablecoin,
+        "--stablecoin",
+      )
+      const collections = new CollectionsAPI(getClient())
+      const result = await collections.setPricingCurrency(slug, useStablecoin)
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
+    .command("creator-fee-enforcement")
+    .description(
+      "Get whether creator fees are enforced onchain and whether the contract supports turning it on",
+    )
+    .argument("<slug>", "Collection slug")
+    .action(async (slug: string) => {
+      const collections = new CollectionsAPI(getClient())
+      const result = await collections.creatorFeeEnforcement(slug)
+      console.log(formatOutput(result, getFormat()))
+    })
+
+  cmd
+    .command("set-creator-fee-enforcement")
+    .description(
+      "Build the transactions that turn creator fee enforcement on or off; with --send, sign and send them from the contract owner's wallet",
+    )
+    .argument("<slug>", "Collection slug")
+    .requiredOption(
+      "--enabled <boolean>",
+      "true to enforce creator fees, false to stop",
+    )
+    .option(
+      "--send",
+      "Sign and send the transactions in order with the configured EVM wallet",
+    )
+    .option(
+      "--wallet-provider <provider>",
+      `Wallet provider to use with --send (${WALLET_PROVIDERS.join(", ")})`,
+    )
+    .action(
+      async (
+        slug: string,
+        options: { enabled: string; send?: boolean; walletProvider?: string },
+      ) => {
+        const enabled = parseBooleanOption(options.enabled, "--enabled")
+        const collections = new CollectionsAPI(getClient())
+        const format = getFormat()
+        if (!options.send) {
+          const result =
+            await collections.buildCreatorFeeEnforcementTransactions(
+              slug,
+              enabled,
+            )
+          console.log(formatOutput(result, format))
+          return
+        }
+
+        const { transactions } =
+          await collections.buildCreatorFeeEnforcementTransactions(
+            slug,
+            enabled,
+          )
+        if (transactions.length === 0) {
+          console.error(
+            `Creator fee enforcement is already ${enabled ? "on" : "off"}; nothing to send.`,
+          )
+          console.log(formatOutput({ hashes: [] }, format))
+          return
+        }
+        const { wallet } = await openEvmWallet(
+          options.walletProvider,
+          "creator fee enforcement",
+        )
+        const results = await collections.sendTransactions(
+          transactions,
+          wallet,
+          {
+            onSending: sending =>
+              console.error(
+                `Sending creator fee enforcement transaction to ${sending.to} on chain ${sending.chain} (${sending.chainId})...`,
+              ),
+            onSent: sent => console.error(`Sent ${sent.hash}`),
+          },
+        )
+        console.log(formatOutput({ hashes: results.map(r => r.hash) }, format))
+      },
+    )
+
+  cmd
+    .command("refresh")
+    .description("Queue a refresh of a collection's metadata from its contract")
+    .argument("<slug>", "Collection slug")
+    .action(async (slug: string) => {
+      const collections = new CollectionsAPI(getClient())
+      const result = await collections.refresh(slug)
+      console.log(formatOutput(result, getFormat()))
+    })
 
   return cmd
 }

@@ -1,5 +1,11 @@
 # @opensea/cli
 
+## 2.11.0
+
+### Minor Changes
+
+- a39e5b9: Add collection page commands: `collections get-metadata` (the saved page in the `update-metadata` body shape, with its preview URL), `upload-page-media` (an image or MP4 video for a page placement; with `--file` it uploads and prints the token), `set-pricing-currency --stablecoin`, `creator-fee-enforcement`, `set-creator-fee-enforcement --enabled` (with `--send`, signs the returned transactions in order from the owner wallet) and `refresh`. Add `drops items` to list a drop's saved items, a draft's included. `CollectionsAPI` is now exported, with `pageMetadata`, `createPageMediaUpload`, `setPricingCurrency`, `creatorFeeEnforcement`, `buildCreatorFeeEnforcementTransactions`, `sendTransactions` and `refresh`, and `DropsAPI` gains `items`.
+
 ## 2.10.0
 
 ### Minor Changes

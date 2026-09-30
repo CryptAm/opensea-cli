@@ -24,8 +24,12 @@ import type {
   CollectionHoldersPaginatedResponse,
   CollectionOfferAggregatesPaginatedResponse,
   CollectionOrderBy,
+  CollectionPageMetadataResponse,
   CollectionPaginatedResponse,
+  CollectionRefreshResponse,
   CollectionStats,
+  CollectionTransactionResponse,
+  CollectionTransactionsResponse,
   Contract,
   CreateCancelOrderActionsRequest,
   CreateCancelOrderActionsResponse,
@@ -37,6 +41,7 @@ import type {
   CreateOfferActionsResponse,
   CreateOfferFulfillmentActionsRequest,
   CreateOfferFulfillmentActionsResponse,
+  CreatorFeeEnforcementStatusResponse,
   CrossChainDropMintRequest,
   CrossChainDropMintResponse,
   CrossChainFulfillmentResponse,
@@ -44,6 +49,7 @@ import type {
   DropDeployRequest,
   DropDeployResponse,
   DropDetailedResponse,
+  DropItemsPaginatedResponse,
   DropMetadataUploadProgressResponse,
   DropMetadataUploadResponse,
   DropMintResponse,
@@ -71,6 +77,7 @@ import type {
   SaveDropItemMediaResponse,
   SearchAssetType,
   SearchResponse,
+  SetCollectionPricingCurrencyResponse,
   SwapExecuteRequest,
   SwapExecuteResponse,
   SwapQuoteResponse,
@@ -204,7 +211,7 @@ class ChainsAPI {
   }
 }
 
-class CollectionsAPI {
+export class CollectionsAPI {
   constructor(private client: OpenSeaClient) {}
 
   async get(slug: string): Promise<Collection> {
@@ -311,6 +318,110 @@ class CollectionsAPI {
       timeframe: options?.timeframe,
       resolution: options?.resolution,
     })
+  }
+
+  /**
+   * The collection page as saved: hero, about and overview, in the shape of
+   * the `update-metadata` request body, plus the page's preview URL.
+   */
+  async pageMetadata(slug: string): Promise<CollectionPageMetadataResponse> {
+    return this.client.get(
+      `/api/v2/collections/${encodeURIComponent(slug)}/metadata`,
+    )
+  }
+
+  /**
+   * Request an upload context for an image or MP4 video on the collection
+   * page. `placement` is one of hero_desktop, hero_mobile, about_preview,
+   * about_section, overview, overview_background or team. Pass the token
+   * from the upload in the metadata update as `{ image: { token } }` or
+   * `{ video: { token } }`.
+   */
+  async createPageMediaUpload(
+    slug: string,
+    placement: string,
+    contentType: string,
+  ): Promise<UploadContext> {
+    return this.client.post(
+      `/api/v2/collections/${encodeURIComponent(slug)}/media/${encodeURIComponent(placement)}?content_type=${encodeURIComponent(contentType)}`,
+    )
+  }
+
+  /**
+   * Price secondary sales in the chain's USD stablecoin (USDG on Robinhood
+   * Chain) or its native currency. `workflow_id` is null when the collection
+   * is already priced that way.
+   */
+  async setPricingCurrency(
+    slug: string,
+    useStablecoin: boolean,
+  ): Promise<SetCollectionPricingCurrencyResponse> {
+    return this.client.post(
+      `/api/v2/collections/${encodeURIComponent(slug)}/pricing_currency`,
+      { use_stablecoin: useStablecoin },
+    )
+  }
+
+  async creatorFeeEnforcement(
+    slug: string,
+  ): Promise<CreatorFeeEnforcementStatusResponse> {
+    return this.client.get(
+      `/api/v2/collections/${encodeURIComponent(slug)}/creator_fee_enforcement`,
+    )
+  }
+
+  /**
+   * Build the transactions that turn creator fee enforcement on or off. Send
+   * them in order from each one's `from`, the contract's onchain owner. The
+   * list is empty when the contract is already in the requested state.
+   */
+  async buildCreatorFeeEnforcementTransactions(
+    slug: string,
+    enabled: boolean,
+  ): Promise<CollectionTransactionsResponse> {
+    return this.client.post(
+      `/api/v2/collections/${encodeURIComponent(slug)}/creator_fee_enforcement`,
+      { enabled },
+    )
+  }
+
+  /**
+   * Sign and send collection transactions in order, one at a time. Refuses
+   * the whole list before sending anything when the wallet is not every
+   * transaction's `from`, since a transaction from any other address
+   * reverts. `onSent` fires after each send, so a caller can report the
+   * hashes already onchain when a later send fails.
+   */
+  async sendTransactions(
+    txs: CollectionTransactionResponse[],
+    wallet: WalletAdapter,
+    callbacks?: {
+      onSending?: (tx: { to: string; chain: string; chainId: number }) => void
+      onSent?: (result: TransactionResult) => void
+    },
+  ): Promise<TransactionResult[]> {
+    const evmWallet = requireEvmAdapter(wallet, "collection transactions")
+    const address = (await evmWallet.getAddress()).toLowerCase()
+    const foreign = txs.find(tx => tx.from.toLowerCase() !== address)
+    if (foreign) {
+      throw new Error(
+        `Wallet ${address} is not the contract owner ${foreign.from}. The transaction must be sent from ${foreign.from}, or it reverts.`,
+      )
+    }
+    const results: TransactionResult[] = []
+    for (const tx of txs) {
+      const result = await sendDropTransaction(evmWallet, tx, callbacks)
+      callbacks?.onSent?.(result)
+      results.push(result)
+    }
+    return results
+  }
+
+  /** Queue a refresh of the collection's metadata from its contract. */
+  async refresh(slug: string): Promise<CollectionRefreshResponse> {
+    return this.client.post(
+      `/api/v2/collections/${encodeURIComponent(slug)}/refresh`,
+    )
   }
 }
 
@@ -427,6 +538,17 @@ export class DropsAPI {
 
   async get(slug: string): Promise<DropDetailedResponse> {
     return this.client.get(`/api/v2/drops/${slug}`)
+  }
+
+  /** The drop's saved items, including a draft's, one page at a time. */
+  async items(
+    slug: string,
+    options?: { limit?: number; next?: string },
+  ): Promise<DropItemsPaginatedResponse> {
+    return this.client.get(`/api/v2/drops/${encodeURIComponent(slug)}/items`, {
+      limit: options?.limit,
+      next: options?.next,
+    })
   }
 
   async mint(
