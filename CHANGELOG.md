@@ -1,5 +1,21 @@
 # @opensea/cli
 
+## 2.10.0
+
+### Minor Changes
+
+- 07d0bdc: Add `opensea drops upload-items <slug> <dir> [--manifest <path>] [--concurrency <n>]`, which uploads a folder of item media and saves it as the drop's items in one upload batch: it generates one batch id, requests upload contexts 50 files at a time with it, uploads each chunk, then saves the batch by filename. Without a manifest, items are numbered in natural filename order (`2.png` before `10.png`); hidden files, subfolders and `.csv` files are skipped, and a symlink in the folder is refused rather than followed. Add `opensea drops save-item-media-batch <slug>` (`--body <path>`, or `--upload-batch-id <uuid> --dir <path>` to re-save a folder that is already uploaded) and `create-item-media-upload --upload-batch-id <uuid>`. `save-item-media`, which saves by media token, is deprecated.
+
+  The programmatic `DropsAPI` gains `createItemMediaUpload`, `saveItemMediaBatch` and `uploadItemMedia(slug, files, options)`, the helper behind `upload-items`. Each file's `data` can be a function so a large drop is read one file at a time.
+
+### Patch Changes
+
+- Updated dependencies [bab8feb]
+- Updated dependencies [07d0bdc]
+- Updated dependencies [07d0bdc]
+  - @opensea/api-types@0.15.0
+  - @opensea/sdk@12.11.0
+
 ## 2.9.1
 
 ### Patch Changes

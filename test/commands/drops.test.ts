@@ -1,4 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import {
+  mkdirSync,
+  mkdtempSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable } from "node:stream"
@@ -1111,6 +1118,410 @@ describe("dropsCommand", () => {
         (error: Error) => !error.message.includes("x".repeat(600)),
       )
       expect(ctx.consoleSpy).not.toHaveBeenCalled()
+    })
+  })
+  describe("item media upload batches", () => {
+    const UUID_PATTERN =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+    const dirs: string[] = []
+    let errorSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
+    })
+
+    afterEach(() => {
+      for (const dir of dirs.splice(0)) {
+        rmSync(dir, { recursive: true, force: true })
+      }
+    })
+
+    function mediaDir(names: string[]): string {
+      const dir = mkdtempSync(join(tmpdir(), "cli-media-"))
+      dirs.push(dir)
+      for (const name of names) writeFileSync(join(dir, name), name)
+      return dir
+    }
+
+    function contextsFor(filenames: string[]) {
+      return filenames.map(name => ({
+        ...uploadContext,
+        fields: { ...uploadContext.fields, key: `uploads/${name}` },
+        token: `token-${name}`,
+      }))
+    }
+
+    function mockDropMediaApi() {
+      ctx.mockClient.post.mockImplementation(
+        async (path: string, body?: { filenames: string[] }) => {
+          if (path.endsWith("/items/media")) {
+            return contextsFor(body?.filenames ?? [])
+          }
+          if (path.endsWith("/items/manifest")) return uploadContext
+          return { success: true }
+        },
+      )
+    }
+
+    function postsTo(suffix: string) {
+      return ctx.mockClient.post.mock.calls.filter(([path]) =>
+        (path as string).endsWith(suffix),
+      )
+    }
+
+    it("upload-items uploads a folder in one batch and saves it by filename", async () => {
+      mockDropMediaApi()
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async () => new Response(null, { status: 204 }))
+      const dir = mediaDir(["10.png", "2.png", "1.png", ".DS_Store", "m.csv"])
+      mkdirSync(join(dir, "nested"))
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(["upload-items", "cool-cats", dir], {
+        from: "user",
+      })
+
+      const uploads = postsTo("/items/media")
+      expect(uploads).toHaveLength(1)
+      const [path, body] = uploads[0] as [
+        string,
+        { filenames: string[]; upload_batch_id: string },
+      ]
+      expect(path).toBe("/api/v2/drops/cool-cats/items/media")
+      expect(body.filenames).toEqual(["1.png", "2.png", "10.png"])
+      expect(body.upload_batch_id).toMatch(UUID_PATTERN)
+
+      expect(fetchSpy).toHaveBeenCalledTimes(3)
+      const uploadedKeys = fetchSpy.mock.calls.map(call => {
+        const form = (call[1] as RequestInit).body as FormData
+        return [form.get("key"), (form.get("file") as File).name]
+      })
+      expect(uploadedKeys).toEqual(
+        expect.arrayContaining([
+          ["uploads/1.png", "1.png"],
+          ["uploads/2.png", "2.png"],
+          ["uploads/10.png", "10.png"],
+        ]),
+      )
+
+      expect(postsTo("/items/manifest")).toHaveLength(0)
+      expect(postsTo("/items/media/save-batch")).toEqual([
+        [
+          "/api/v2/drops/cool-cats/items/media/save-batch",
+          {
+            upload_batch_id: body.upload_batch_id,
+            filenames: ["1.png", "2.png", "10.png"],
+          },
+        ],
+      ])
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify(
+          {
+            upload_batch_id: body.upload_batch_id,
+            item_count: 3,
+            success: true,
+          },
+          null,
+          2,
+        ),
+      )
+    })
+
+    it("upload-items reuses one batch id across 50-file chunks", async () => {
+      mockDropMediaApi()
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(null, { status: 204 }),
+      )
+      const names = Array.from({ length: 120 }, (_, i) => `${i + 1}.png`)
+      const dir = mediaDir(names)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        ["upload-items", "cool-cats", dir, "--concurrency", "8"],
+        { from: "user" },
+      )
+
+      const bodies = postsTo("/items/media").map(
+        ([, body]) => body as { filenames: string[]; upload_batch_id: string },
+      )
+      expect(bodies.map(body => body.filenames.length)).toEqual([50, 50, 20])
+      expect(bodies.flatMap(body => body.filenames)).toEqual(names)
+      const batchIds = new Set(bodies.map(body => body.upload_batch_id))
+      expect(batchIds.size).toBe(1)
+      const [batchId] = [...batchIds]
+      expect(batchId).toMatch(UUID_PATTERN)
+      expect(postsTo("/items/media/save-batch")[0]?.[1]).toEqual({
+        upload_batch_id: batchId,
+        filenames: names,
+      })
+    })
+
+    it("upload-items --manifest uploads the manifest before the media and the save", async () => {
+      mockDropMediaApi()
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async () => new Response(null, { status: 204 }))
+      const dir = mediaDir(["1.png"])
+      const csv = "tokenID,name,description,file_name\n7,Seven,Lucky,1.png\n"
+      const manifest = join(dir, "manifest.csv")
+      writeFileSync(manifest, csv)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        ["upload-items", "cool-cats", dir, "--manifest", manifest],
+        { from: "user" },
+      )
+
+      expect(ctx.mockClient.post.mock.calls.map(([path]) => path)).toEqual([
+        "/api/v2/drops/cool-cats/items/manifest",
+        "/api/v2/drops/cool-cats/items/media",
+        "/api/v2/drops/cool-cats/items/media/save-batch",
+      ])
+      const firstUpload = (fetchSpy.mock.calls[0]?.[1] as RequestInit)
+        .body as FormData
+      const manifestFile = firstUpload.get("file") as File
+      expect(manifestFile.name).toBe("manifest.csv")
+      expect(await manifestFile.text()).toBe(csv)
+      expect(postsTo("/items/media")[0]?.[1]).toMatchObject({
+        filenames: ["1.png"],
+      })
+    })
+
+    it("upload-items refuses a symlink rather than uploading its target", async () => {
+      const outside = mediaDir(["secret.png"])
+      const dir = mediaDir(["1.png"])
+      symlinkSync(join(outside, "secret.png"), join(dir, "2.png"))
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(["upload-items", "cool-cats", dir], { from: "user" }),
+      ).rejects.toThrow(`Refusing to upload symlinks in '${dir}': 2.png`)
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+      expect(fetchSpy).not.toHaveBeenCalled()
+    })
+
+    it("upload-items does not follow a file swapped for a symlink after listing", async () => {
+      mockDropMediaApi()
+      const outside = mediaDir(["secret.png"])
+      const dir = mediaDir(["1.png"])
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+      ctx.mockClient.post.mockImplementationOnce(
+        async (_path: string, body?: { filenames: string[] }) => {
+          // Swap the listed file for a link once the listing has run.
+          rmSync(join(dir, "1.png"))
+          symlinkSync(join(outside, "secret.png"), join(dir, "1.png"))
+          return contextsFor(body?.filenames ?? [])
+        },
+      )
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(["upload-items", "cool-cats", dir], { from: "user" }),
+      ).rejects.toThrow("Uploading 1.png failed")
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(postsTo("/items/media/save-batch")).toHaveLength(0)
+    })
+
+    it("upload-items refuses a file replaced after listing, even without O_NOFOLLOW", async () => {
+      mockDropMediaApi()
+      const dir = mediaDir(["1.png"])
+      const fetchSpy = vi.spyOn(globalThis, "fetch")
+      ctx.mockClient.post.mockImplementationOnce(
+        async (_path: string, body?: { filenames: string[] }) => {
+          // A new file under the listed name has a different inode, which is
+          // what a followed link looks like where O_NOFOLLOW is unavailable.
+          const replacement = join(dir, "replacement.tmp")
+          writeFileSync(replacement, "other")
+          rmSync(join(dir, "1.png"))
+          renameSync(replacement, join(dir, "1.png"))
+          return contextsFor(body?.filenames ?? [])
+        },
+      )
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(["upload-items", "cool-cats", dir], { from: "user" }),
+      ).rejects.toThrow("changed after it was listed")
+      expect(fetchSpy).not.toHaveBeenCalled()
+      expect(postsTo("/items/media/save-batch")).toHaveLength(0)
+    })
+
+    it("upload-items rejects bad input before any request", async () => {
+      const cmd = () => dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd().parseAsync(["upload-items", "cool-cats", mediaDir([".hidden"])], {
+          from: "user",
+        }),
+      ).rejects.toThrow("No item media files in")
+      await expect(
+        cmd().parseAsync(
+          [
+            "upload-items",
+            "cool-cats",
+            mediaDir(["1.png"]),
+            "--concurrency",
+            "0",
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("--concurrency must be at least 1")
+      await expect(
+        cmd().parseAsync(
+          [
+            "upload-items",
+            "cool-cats",
+            mediaDir(["1.png"]),
+            "--manifest",
+            join(tmpdir(), "missing-manifest.csv"),
+          ],
+          { from: "user" },
+        ),
+      ).rejects.toThrow("Could not read --manifest")
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+    })
+
+    it("upload-items names the recovery command when the save fails after every upload", async () => {
+      ctx.mockClient.post.mockImplementation(
+        async (path: string, body?: { filenames: string[] }) => {
+          if (path.endsWith("/items/media")) {
+            return contextsFor(body?.filenames ?? [])
+          }
+          throw new Error("1 of 1 file(s) were not found in this upload")
+        },
+      )
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(null, { status: 204 }),
+      )
+      const dir = join(mediaDir([]), "my media")
+      mkdirSync(dir)
+      writeFileSync(join(dir, "1.png"), "1")
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await expect(
+        cmd.parseAsync(["upload-items", "cool-cats", dir], { from: "user" }),
+      ).rejects.toThrow("were not found in this upload")
+
+      const batchId = (
+        postsTo("/items/media")[0]?.[1] as { upload_batch_id: string }
+      ).upload_batch_id
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+          `opensea drops save-item-media-batch cool-cats --upload-batch-id ${batchId} --dir '${dir}'`,
+        ),
+      )
+    })
+
+    it("create-item-media-upload --upload-batch-id adds the batch id to the body", async () => {
+      ctx.mockClient.post.mockResolvedValue([uploadContext])
+      const file = writeTempJson({ filenames: ["1.png"] })
+      const batchId = "5f0c2b1e-7a4d-4e8b-9c3f-2d6a1b0e9f47"
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      try {
+        await cmd.parseAsync(
+          [
+            "create-item-media-upload",
+            "cool-cats",
+            "--body",
+            file,
+            "--upload-batch-id",
+            batchId,
+          ],
+          { from: "user" },
+        )
+      } finally {
+        rmSync(file, { force: true })
+      }
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/drops/cool-cats/items/media",
+        { filenames: ["1.png"], upload_batch_id: batchId },
+      )
+    })
+
+    it("save-item-media-batch posts the --body request", async () => {
+      ctx.mockClient.post.mockResolvedValue({ success: true })
+      const body = {
+        upload_batch_id: "5f0c2b1e-7a4d-4e8b-9c3f-2d6a1b0e9f47",
+        filenames: ["2.png", "1.png"],
+      }
+      const file = writeTempJson(body)
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      try {
+        await cmd.parseAsync(
+          ["save-item-media-batch", "cool-cats", "--body", file],
+          { from: "user" },
+        )
+      } finally {
+        rmSync(file, { force: true })
+      }
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/drops/cool-cats/items/media/save-batch",
+        body,
+      )
+      expect(ctx.consoleSpy).toHaveBeenCalledWith(
+        JSON.stringify({ success: true }, null, 2),
+      )
+    })
+
+    it("save-item-media-batch --dir saves a folder's files in upload-items order", async () => {
+      ctx.mockClient.post.mockResolvedValue({ success: true })
+      const batchId = "5f0c2b1e-7a4d-4e8b-9c3f-2d6a1b0e9f47"
+      const dir = mediaDir(["10.png", "9.png", "manifest.csv"])
+
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      await cmd.parseAsync(
+        [
+          "save-item-media-batch",
+          "cool-cats",
+          "--upload-batch-id",
+          batchId,
+          "--dir",
+          dir,
+        ],
+        { from: "user" },
+      )
+
+      expect(ctx.mockClient.post).toHaveBeenCalledWith(
+        "/api/v2/drops/cool-cats/items/media/save-batch",
+        { upload_batch_id: batchId, filenames: ["9.png", "10.png"] },
+      )
+    })
+
+    it("save-item-media-batch refuses an incomplete or ambiguous request", async () => {
+      const dir = mediaDir(["1.png"])
+      const file = writeTempJson({ upload_batch_id: "x", filenames: ["1.png"] })
+      const run = (args: string[]) =>
+        dropsCommand(ctx.getClient, ctx.getFormat).parseAsync(
+          ["save-item-media-batch", "cool-cats", ...args],
+          { from: "user" },
+        )
+      try {
+        await expect(run([])).rejects.toThrow(
+          "Pass --body, or --upload-batch-id with --dir",
+        )
+        await expect(run(["--dir", dir])).rejects.toThrow(
+          "--dir needs --upload-batch-id",
+        )
+        await expect(run(["--body", file, "--dir", dir])).rejects.toThrow(
+          "Pass either --body or --dir, not both",
+        )
+      } finally {
+        rmSync(file, { force: true })
+      }
+      expect(ctx.mockClient.post).not.toHaveBeenCalled()
+    })
+
+    it("marks save-item-media deprecated in its help", () => {
+      const cmd = dropsCommand(ctx.getClient, ctx.getFormat)
+      const save = cmd.commands.find(c => c.name() === "save-item-media")
+      expect(save?.description()).toMatch(
+        /^Deprecated: use save-item-media-batch/,
+      )
     })
   })
 })

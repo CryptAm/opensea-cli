@@ -325,6 +325,9 @@ export type UpdateSelfMintDropItemRequest =
 export type UpdateDropItemRequest = Schemas["UpdateDropItemRequest"]
 export type UploadDropItemMediaRequest = Schemas["UploadDropItemMediaRequest"]
 export type SaveDropItemMediaRequest = Schemas["SaveDropItemMediaRequest"]
+export type SaveDropItemMediaBatchRequest =
+  Schemas["SaveDropItemMediaBatchRequest"]
+export type SaveDropItemMediaResponse = Schemas["SaveDropItemMediaResponse"]
 export type ValidateDropAllowlistRequest =
   Schemas["ValidateDropAllowlistRequest"]
 export type DropTransactionResponse = Schemas["DropTransactionResponse"]

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import { OpenSeaClient } from "./client.js"
 import { checkHealth } from "./health.js"
 import type {
@@ -66,6 +67,8 @@ import type {
   PriceHistoryResponse,
   ProfileCollectionsResponse,
   RegisteredToolResponse,
+  SaveDropItemMediaBatchRequest,
+  SaveDropItemMediaResponse,
   SearchAssetType,
   SearchResponse,
   SwapExecuteRequest,
@@ -95,10 +98,12 @@ import type {
   TransferRequest,
   TransferResponse,
   UploadContext,
+  UploadDropItemMediaRequest,
   ValidateMetadataResponse,
   WalletPnlResponse,
   WalletVisibilityResponse,
 } from "./types/index.js"
+import { uploadToContext } from "./upload.js"
 import type {
   EvmWalletAdapter,
   TransactionResult,
@@ -351,6 +356,58 @@ function pollTiming(options?: { intervalMs?: number; timeoutMs?: number }): {
   return { intervalMs, timeoutMs }
 }
 
+/** Most filenames one `createItemMediaUpload` request takes. */
+const ITEM_MEDIA_UPLOAD_CHUNK_SIZE = 50
+/** Most filenames one `saveItemMediaBatch` request takes. */
+const ITEM_MEDIA_BATCH_MAX_FILES = 15_000
+
+/**
+ * A file for `DropsAPI.uploadItemMedia`. `data` may be a function, called
+ * only when that file is uploaded, so a large drop is never held in memory at
+ * once.
+ */
+export interface DropUploadFile {
+  /** Name the file is uploaded and saved under, such as `1.png`. */
+  filename: string
+  data: Blob | (() => Blob | Promise<Blob>)
+}
+
+export interface UploadItemMediaResult {
+  /** The batch the files were uploaded in and saved from. */
+  upload_batch_id: string
+  /** Number of items saved. */
+  item_count: number
+  success: boolean
+}
+
+/**
+ * Run `task` for indexes 0 to `count - 1`, at most `concurrency` at a time.
+ * The first failure stops new tasks from starting and is rethrown once the
+ * running ones settle.
+ */
+async function runWithConcurrency(
+  count: number,
+  concurrency: number,
+  task: (index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0
+  let failure: { error: unknown } | undefined
+  const worker = async () => {
+    while (!failure && next < count) {
+      const index = next++
+      try {
+        await task(index)
+      } catch (error) {
+        failure ??= { error }
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, count) }, worker),
+  )
+  if (failure) throw failure.error
+}
+
 export class DropsAPI {
   constructor(private client: OpenSeaClient) {}
 
@@ -584,6 +641,151 @@ export class DropsAPI {
     return this.client.post(
       `/api/v2/drops/${encodeURIComponent(slug)}/items/manifest`,
     )
+  }
+
+  /**
+   * Request upload contexts for up to 50 item media files, one per filename
+   * in the same order. To save the items in bulk, pass the same
+   * `upload_batch_id` on every request for one set of files, then save them
+   * with `saveItemMediaBatch`. `uploadItemMedia` does all of this.
+   */
+  async createItemMediaUpload(
+    slug: string,
+    request: UploadDropItemMediaRequest,
+  ): Promise<UploadContext[]> {
+    return this.client.post(
+      `/api/v2/drops/${encodeURIComponent(slug)}/items/media`,
+      request,
+    )
+  }
+
+  /**
+   * Save the drop's items from files uploaded with one `upload_batch_id`,
+   * naming them by filename (up to 15,000). Each save replaces the drop's
+   * items. A manifest uploaded with `createManifestUpload` supplies token ids
+   * and metadata; without one, items are numbered 1 to n in the order of
+   * `filenames`.
+   */
+  async saveItemMediaBatch(
+    slug: string,
+    request: SaveDropItemMediaBatchRequest,
+  ): Promise<SaveDropItemMediaResponse> {
+    return this.client.post(
+      `/api/v2/drops/${encodeURIComponent(slug)}/items/media/save-batch`,
+      request,
+    )
+  }
+
+  /**
+   * Upload a set of item media files and save them as the drop's items, in
+   * one upload batch. It uses `uploadBatchId`, or a new UUID, on every upload
+   * request, requests upload contexts 50 files at a time and uploads each
+   * chunk before requesting the next (the contexts are short-lived), then
+   * saves every file by filename with `saveItemMediaBatch`. With `manifest`,
+   * the manifest CSV is uploaded first so the save reads it; without one,
+   * items are numbered 1 to n in the order of `files`.
+   *
+   * Filenames must be unique, and the API's filename rules apply (see
+   * `UploadDropItemMediaRequest`). The save replaces the drop's items.
+   */
+  async uploadItemMedia(
+    slug: string,
+    files: DropUploadFile[],
+    options?: {
+      uploadBatchId?: string
+      manifest?: DropUploadFile
+      /** Storage uploads to run at once. Defaults to 4. */
+      concurrency?: number
+      onProgress?: (progress: { uploaded: number; total: number }) => void
+      signal?: AbortSignal
+    },
+  ): Promise<UploadItemMediaResult> {
+    const concurrency = options?.concurrency ?? 4
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      throw new RangeError(
+        `concurrency must be a positive integer, got ${concurrency}`,
+      )
+    }
+    if (files.length === 0) {
+      throw new Error("No item media files to upload")
+    }
+    if (files.length > ITEM_MEDIA_BATCH_MAX_FILES) {
+      throw new Error(
+        `A batch save takes at most ${ITEM_MEDIA_BATCH_MAX_FILES} files, got ${files.length}`,
+      )
+    }
+    const filenames = files.map(file => file.filename)
+    const seen = new Set<string>()
+    const duplicates = new Set<string>()
+    for (const name of filenames) {
+      if (seen.has(name)) duplicates.add(name)
+      seen.add(name)
+    }
+    if (duplicates.size > 0) {
+      throw new Error(
+        `Filenames must be unique; listed more than once: ${[...duplicates].join(", ")}`,
+      )
+    }
+
+    const uploadBatchId = options?.uploadBatchId ?? randomUUID()
+    const signal = options?.signal
+    const readData = async (file: DropUploadFile) =>
+      typeof file.data === "function" ? await file.data() : file.data
+
+    if (options?.manifest) {
+      const context = await this.createManifestUpload(slug)
+      await uploadToContext(context, await readData(options.manifest), {
+        filename: options.manifest.filename,
+        signal,
+      })
+    }
+
+    let uploaded = 0
+    for (
+      let start = 0;
+      start < files.length;
+      start += ITEM_MEDIA_UPLOAD_CHUNK_SIZE
+    ) {
+      signal?.throwIfAborted()
+      const chunk = files.slice(start, start + ITEM_MEDIA_UPLOAD_CHUNK_SIZE)
+      const contexts = await this.createItemMediaUpload(slug, {
+        filenames: chunk.map(file => file.filename),
+        upload_batch_id: uploadBatchId,
+      })
+      if (!Array.isArray(contexts) || contexts.length !== chunk.length) {
+        throw new Error(
+          `Expected ${chunk.length} upload contexts, got ${Array.isArray(contexts) ? contexts.length : typeof contexts}`,
+        )
+      }
+      await runWithConcurrency(chunk.length, concurrency, async index => {
+        const file = chunk[index] as DropUploadFile
+        try {
+          await uploadToContext(
+            contexts[index] as UploadContext,
+            await readData(file),
+            { filename: file.filename, signal },
+          )
+        } catch (error) {
+          throw new Error(
+            `Uploading ${file.filename} failed: ${(error as Error).message}`,
+            { cause: error },
+          )
+        }
+        uploaded++
+        options?.onProgress?.({ uploaded, total: files.length })
+      })
+    }
+
+    signal?.throwIfAborted()
+    const saved = await this.saveItemMediaBatch(slug, {
+      upload_batch_id: uploadBatchId,
+      filenames,
+    })
+    return {
+      upload_batch_id: uploadBatchId,
+      item_count: filenames.length,
+      success: saved.success,
+    }
   }
 }
 

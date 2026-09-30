@@ -1,5 +1,7 @@
-import { readFileSync } from "node:fs"
-import { basename } from "node:path"
+import { randomUUID } from "node:crypto"
+import { constants, lstatSync, readdirSync, readFileSync } from "node:fs"
+import { open } from "node:fs/promises"
+import { basename, extname, join } from "node:path"
 import { Command } from "commander"
 import type { OpenSeaClient } from "../client.js"
 import type { OutputFormat } from "../output.js"
@@ -21,6 +23,7 @@ import type {
   DropMintResponse,
   DropTransactionResponse,
   SaveDropEditsRequest,
+  SaveDropItemMediaBatchRequest,
   SaveDropItemMediaRequest,
   SavePrerevealDropItemRequest,
   SaveSelfMintDropItemRequest,
@@ -75,6 +78,94 @@ async function openEvmWallet(
   const address = await wallet.getAddress()
   console.error(`Using ${wallet.name} wallet: ${address}`)
   return { wallet, address }
+}
+
+/** Quote an argument for a copy-pasteable POSIX shell command, if it needs it. */
+function shellQuote(value: string): string {
+  return /^[\w@%+=:,./-]+$/.test(value)
+    ? value
+    : `'${value.replace(/'/g, "'\\''")}'`
+}
+
+const filenameCollator = new Intl.Collator("en", { numeric: true })
+
+/**
+ * The item media files in `dir`, in natural filename order (2.png before
+ * 10.png), which is the item order a save without a manifest uses. Hidden
+ * files such as .DS_Store, subdirectories, and .csv files are skipped: the API
+ * never takes a CSV as item media, so a manifest can sit in the same folder.
+ *
+ * A symlink is refused rather than followed. Drop media goes to a public CDN,
+ * so a link named 1.png in a downloaded folder must not be able to publish a
+ * file from elsewhere on the machine.
+ */
+interface ListedMediaFile {
+  filename: string
+  path: string
+  /** Identity of the file when it was listed, checked again when it is read. */
+  dev: bigint
+  ino: bigint
+}
+
+function listItemMediaFiles(dir: string): ListedMediaFile[] {
+  let names: string[]
+  try {
+    names = readdirSync(dir)
+  } catch (err) {
+    throw new Error(
+      `Could not read directory '${dir}': ${(err as Error).message}`,
+    )
+  }
+  const symlinks: string[] = []
+  const files: ListedMediaFile[] = []
+  for (const name of names) {
+    if (name.startsWith(".") || extname(name).toLowerCase() === ".csv") continue
+    const path = join(dir, name)
+    const stats = lstatSync(path, { bigint: true, throwIfNoEntry: false })
+    if (stats?.isSymbolicLink()) symlinks.push(name)
+    if (stats?.isFile()) {
+      files.push({ filename: name, path, dev: stats.dev, ino: stats.ino })
+    }
+  }
+  files.sort(
+    (a, b) =>
+      filenameCollator.compare(a.filename, b.filename) ||
+      (a.filename < b.filename ? -1 : a.filename > b.filename ? 1 : 0),
+  )
+  if (symlinks.length > 0) {
+    throw new Error(
+      `Refusing to upload symlinks in '${dir}': ${symlinks.join(", ")}. Copy the files into the folder instead.`,
+    )
+  }
+  if (files.length === 0) {
+    throw new Error(`No item media files in '${dir}'`)
+  }
+  return files
+}
+
+/**
+ * Read a file listed by `listItemMediaFiles`, refusing anything but the file
+ * that was listed. The listing already refuses symlinks, but the file is read
+ * later, so an entry swapped for a link in between would otherwise be
+ * followed. O_NOFOLLOW makes the open fail on a link where the platform has
+ * it. On every platform, including Windows where it does not exist, the opened
+ * handle must be a regular file with the device and inode the listing
+ * recorded, and the bytes are read from that same handle.
+ */
+async function readListedFile(file: ListedMediaFile): Promise<Buffer> {
+  const handle = await open(
+    file.path,
+    constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+  )
+  try {
+    const stats = await handle.stat({ bigint: true })
+    if (!stats.isFile() || stats.dev !== file.dev || stats.ino !== file.ino) {
+      throw new Error(`${file.path} changed after it was listed`)
+    }
+    return await handle.readFile()
+  } finally {
+    await handle.close()
+  }
 }
 
 // Validated before any request, so a bad flag never starts a workflow or a
@@ -588,29 +679,194 @@ export function dropsCommand(
     )
 
   cmd
+    .command("upload-items")
+    .description(
+      "Upload every item media file in a folder and save them as the drop's items, in one upload batch. " +
+        "Replaces the drop's items.",
+    )
+    .argument("<slug>", "Collection slug")
+    .argument(
+      "<dir>",
+      "Folder of item media files. Without a manifest, items are numbered 1 to n in natural filename order (2.png before 10.png). Hidden files, subfolders and .csv files are skipped.",
+    )
+    .option(
+      "--manifest <path>",
+      "Metadata manifest CSV to upload first, so the save takes token ids and metadata from it",
+    )
+    .option("--concurrency <n>", "Storage uploads to run at once", "4")
+    .action(
+      async (
+        slug: string,
+        dir: string,
+        options: { manifest?: string; concurrency: string },
+      ) => {
+        const concurrency = parseIntOption(options.concurrency, "--concurrency")
+        if (concurrency < 1) {
+          throw new Error("--concurrency must be at least 1")
+        }
+        const files = listItemMediaFiles(dir)
+        let manifestBytes: Buffer | undefined
+        if (options.manifest) {
+          try {
+            manifestBytes = readFileSync(options.manifest)
+          } catch (err) {
+            throw new Error(
+              `Could not read --manifest '${options.manifest}': ${(err as Error).message}`,
+            )
+          }
+        }
+
+        const uploadBatchId = randomUUID()
+        console.error(
+          `Uploading ${files.length} files in upload batch ${uploadBatchId}`,
+        )
+        const drops = new DropsAPI(getClient())
+        let uploaded = 0
+        let reported = 0
+        try {
+          const result = await drops.uploadItemMedia(
+            slug,
+            files.map(file => ({
+              filename: file.filename,
+              data: async () =>
+                new Blob([new Uint8Array(await readListedFile(file))]),
+            })),
+            {
+              uploadBatchId,
+              concurrency,
+              manifest:
+                options.manifest && manifestBytes
+                  ? {
+                      filename: basename(options.manifest),
+                      data: new Blob([new Uint8Array(manifestBytes)]),
+                    }
+                  : undefined,
+              onProgress: progress => {
+                uploaded = progress.uploaded
+                if (
+                  progress.uploaded === progress.total ||
+                  progress.uploaded - reported >= 50
+                ) {
+                  reported = progress.uploaded
+                  console.error(
+                    `Uploaded ${progress.uploaded}/${progress.total}`,
+                  )
+                }
+              },
+            },
+          )
+          console.log(formatOutput(result, getFormat()))
+        } catch (err) {
+          if (uploaded === files.length) {
+            console.error(
+              `Every file is uploaded in batch ${uploadBatchId}, but the save failed. ` +
+                `After fixing the cause, save without uploading again: ` +
+                `opensea drops save-item-media-batch ${shellQuote(slug)} --upload-batch-id ${uploadBatchId} --dir ${shellQuote(dir)}`,
+            )
+          }
+          throw err
+        }
+      },
+    )
+
+  cmd
     .command("create-item-media-upload")
-    .description("Request presigned uploads for drop item media files")
+    .description(
+      "Request presigned uploads for up to 50 drop item media files. " +
+        "For a bulk save, pass the same --upload-batch-id on every request, then run save-item-media-batch (upload-items does all of this).",
+    )
     .argument("<slug>", "Collection slug")
     .requiredOption(
       "--body <path>",
       "Path to JSON file with the UploadDropItemMediaRequest body",
     )
-    .action(async (slug: string, options: { body: string }) => {
-      const client = getClient()
-      const request = readJsonBodyOption<UploadDropItemMediaRequest>(
-        options.body,
-        "--body",
-      )
-      const result = await client.post(
-        `/api/v2/drops/${slug}/items/media`,
-        request,
-      )
-      console.log(formatOutput(result, getFormat()))
-    })
+    .option(
+      "--upload-batch-id <uuid>",
+      "Upload batch to add these files to; sets upload_batch_id in the body",
+    )
+    .action(
+      async (
+        slug: string,
+        options: { body: string; uploadBatchId?: string },
+      ) => {
+        const client = getClient()
+        const body = readJsonBodyOption<UploadDropItemMediaRequest>(
+          options.body,
+          "--body",
+        )
+        const request: UploadDropItemMediaRequest =
+          options.uploadBatchId === undefined
+            ? body
+            : { ...body, upload_batch_id: options.uploadBatchId }
+        const result = await client.post(
+          `/api/v2/drops/${slug}/items/media`,
+          request,
+        )
+        console.log(formatOutput(result, getFormat()))
+      },
+    )
+
+  cmd
+    .command("save-item-media-batch")
+    .description(
+      "Save a drop's items from files uploaded in one upload batch, by filename. Replaces the drop's items. " +
+        "Pass --body, or --upload-batch-id with --dir to save a folder's files in upload-items order.",
+    )
+    .argument("<slug>", "Collection slug")
+    .option(
+      "--body <path>",
+      "Path to JSON file with the SaveDropItemMediaBatchRequest body",
+    )
+    .option(
+      "--upload-batch-id <uuid>",
+      "The upload_batch_id the files were uploaded with",
+    )
+    .option(
+      "--dir <path>",
+      "Folder whose files to save, listed as upload-items lists them (needs --upload-batch-id)",
+    )
+    .action(
+      async (
+        slug: string,
+        options: { body?: string; uploadBatchId?: string; dir?: string },
+      ) => {
+        let request: SaveDropItemMediaBatchRequest
+        if (options.body !== undefined) {
+          if (options.dir !== undefined) {
+            throw new Error("Pass either --body or --dir, not both")
+          }
+          const body = readJsonBodyOption<SaveDropItemMediaBatchRequest>(
+            options.body,
+            "--body",
+          )
+          request =
+            options.uploadBatchId === undefined
+              ? body
+              : { ...body, upload_batch_id: options.uploadBatchId }
+        } else if (options.dir !== undefined) {
+          if (options.uploadBatchId === undefined) {
+            throw new Error("--dir needs --upload-batch-id")
+          }
+          request = {
+            upload_batch_id: options.uploadBatchId,
+            filenames: listItemMediaFiles(options.dir).map(
+              file => file.filename,
+            ),
+          }
+        } else {
+          throw new Error("Pass --body, or --upload-batch-id with --dir")
+        }
+        const drops = new DropsAPI(getClient())
+        const result = await drops.saveItemMediaBatch(slug, request)
+        console.log(formatOutput(result, getFormat()))
+      },
+    )
 
   cmd
     .command("save-item-media")
-    .description("Persist previously uploaded drop item media")
+    .description(
+      "Deprecated: use save-item-media-batch or upload-items. Persist previously uploaded drop item media by media token",
+    )
     .argument("<slug>", "Collection slug")
     .requiredOption(
       "--body <path>",

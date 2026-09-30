@@ -208,6 +208,10 @@ opensea drops upload-metadata-ipfs <slug> [--wait] [--interval <seconds>] [--wai
 opensea drops metadata-ipfs-status <slug> <workflow-execution-id>
 opensea drops create-manifest-upload <slug>
 opensea drops upload-file --context <path|-> --file <path> [--index <n>]
+opensea drops upload-items <slug> <dir> [--manifest <path>] [--concurrency <n>]
+opensea drops create-item-media-upload <slug> --body <path> [--upload-batch-id <uuid>]
+opensea drops save-item-media-batch <slug> (--body <path> | --upload-batch-id <uuid> --dir <path>)
+opensea drops save-item-media <slug> --body <path>
 ```
 
 `publish` and `unpublish` print a ready-to-sign transaction. With `--send`
@@ -235,6 +239,35 @@ opensea drops create-item-media-upload my-drop --body filenames.json \
 The upload URL and fields are short-lived credentials, so avoid saving the
 context to a shared location. `upload-file` refuses a context whose `url` is
 not HTTPS.
+
+`upload-items` saves a folder of item media as the drop's items, replacing any
+it already has. It generates one upload batch id, requests upload contexts 50
+files at a time with that id, uploads each chunk (`--concurrency` files at
+once, default 4), then saves the whole batch by filename. With `--manifest`, it
+uploads the manifest CSV first and the save takes token ids and metadata from
+it. Without one, items are numbered 1 to n in natural filename order, so
+`2.png` comes before `10.png`. Hidden files, subfolders and `.csv` files in the
+folder are skipped, and a symlink fails the command before anything is sent,
+since item media is published on a public CDN. Progress goes to stderr, and the result is
+`{"upload_batch_id": ..., "item_count": ..., "success": true}`:
+
+```bash
+opensea drops upload-items my-drop ./media --manifest manifest.csv
+```
+
+If every file uploads but the save fails, for example because the manifest
+names a file that is not in the folder, fix the cause and save the same batch
+again without re-uploading:
+
+```bash
+opensea drops save-item-media-batch my-drop --upload-batch-id <uuid> --dir ./media
+```
+
+To run the steps yourself, pass one `--upload-batch-id` (a UUID you generate
+per set of files) to every `create-item-media-upload` request, upload each
+context with `upload-file`, then run `save-item-media-batch` with a body of
+`{"upload_batch_id": "<uuid>", "filenames": [...]}` (up to 15,000 filenames).
+`save-item-media`, which saves by media token, is deprecated.
 
 ## Transactions
 

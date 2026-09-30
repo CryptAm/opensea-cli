@@ -216,6 +216,174 @@ describe("OpenSeaCLI", () => {
     })
   })
 
+  describe("drops item media upload batches", () => {
+    const context = {
+      url: "https://uploads.example.com/",
+      method: "POST",
+      fields: { key: "k" },
+      token: "t",
+    }
+    const batchId = "5f0c2b1e-7a4d-4e8b-9c3f-2d6a1b0e9f47"
+
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it("createItemMediaUpload and saveItemMediaBatch call the batch endpoints", async () => {
+      mockPost.mockResolvedValueOnce([context])
+      mockPost.mockResolvedValueOnce({ success: true })
+
+      await sdk.drops.createItemMediaUpload("my drop", {
+        filenames: ["1.png"],
+        upload_batch_id: batchId,
+      })
+      const saved = await sdk.drops.saveItemMediaBatch("my drop", {
+        upload_batch_id: batchId,
+        filenames: ["1.png"],
+      })
+
+      expect(mockPost.mock.calls).toEqual([
+        [
+          "/api/v2/drops/my%20drop/items/media",
+          { filenames: ["1.png"], upload_batch_id: batchId },
+        ],
+        [
+          "/api/v2/drops/my%20drop/items/media/save-batch",
+          { upload_batch_id: batchId, filenames: ["1.png"] },
+        ],
+      ])
+      expect(saved).toEqual({ success: true })
+    })
+
+    it("uploadItemMedia keeps the caller's order and batch id, and reads lazy data on upload", async () => {
+      mockPost.mockImplementation(
+        async (path: string, body?: { filenames: string[] }) =>
+          path.endsWith("/items/media")
+            ? (body?.filenames ?? []).map(() => context)
+            : { success: true },
+      )
+      const fetchSpy = vi
+        .spyOn(globalThis, "fetch")
+        .mockImplementation(async () => new Response(null, { status: 204 }))
+      const lazy = vi.fn(async () => new Blob(["b"]))
+      const progress: number[] = []
+
+      const result = await sdk.drops.uploadItemMedia(
+        "drop",
+        [
+          { filename: "b.png", data: lazy },
+          { filename: "a.png", data: new Blob(["a"]) },
+        ],
+        {
+          uploadBatchId: batchId,
+          concurrency: 1,
+          onProgress: p => progress.push(p.uploaded),
+        },
+      )
+
+      expect(mockPost.mock.calls).toEqual([
+        [
+          "/api/v2/drops/drop/items/media",
+          { filenames: ["b.png", "a.png"], upload_batch_id: batchId },
+        ],
+        [
+          "/api/v2/drops/drop/items/media/save-batch",
+          { upload_batch_id: batchId, filenames: ["b.png", "a.png"] },
+        ],
+      ])
+      expect(lazy).toHaveBeenCalledTimes(1)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+      expect(progress).toEqual([1, 2])
+      expect(result).toEqual({
+        upload_batch_id: batchId,
+        item_count: 2,
+        success: true,
+      })
+    })
+
+    it("uploadItemMedia generates a batch id when none is given", async () => {
+      mockPost.mockImplementation(async (path: string) =>
+        path.endsWith("/items/media") ? [context] : { success: true },
+      )
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response(null, { status: 204 }),
+      )
+
+      const result = await sdk.drops.uploadItemMedia("drop", [
+        { filename: "1.png", data: new Blob(["1"]) },
+      ])
+
+      expect(result.upload_batch_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      )
+      expect(mockPost.mock.calls[0]?.[1]).toMatchObject({
+        upload_batch_id: result.upload_batch_id,
+      })
+    })
+
+    it.each([
+      [[], {}, "No item media files to upload"],
+      [
+        [
+          { filename: "1.png", data: new Blob([]) },
+          { filename: "1.png", data: new Blob([]) },
+        ],
+        {},
+        "listed more than once: 1.png",
+      ],
+      [
+        Array.from({ length: 15_001 }, (_, i) => ({
+          filename: `${i}.png`,
+          data: new Blob([]),
+        })),
+        {},
+        "at most 15000 files, got 15001",
+      ],
+      [
+        [{ filename: "1.png", data: new Blob([]) }],
+        { concurrency: 0 },
+        "concurrency must be a positive integer",
+      ],
+    ])("uploadItemMedia rejects bad input before any request (%#)", async (files, options, message) => {
+      await expect(
+        sdk.drops.uploadItemMedia("drop", files, options),
+      ).rejects.toThrow(message)
+      expect(mockPost).not.toHaveBeenCalled()
+    })
+
+    it("uploadItemMedia names the failed file and never saves", async () => {
+      mockPost.mockResolvedValue([context, context])
+      vi.spyOn(globalThis, "fetch").mockImplementation(
+        async () => new Response("denied", { status: 403 }),
+      )
+
+      await expect(
+        sdk.drops.uploadItemMedia(
+          "drop",
+          [
+            { filename: "1.png", data: new Blob(["1"]) },
+            { filename: "2.png", data: new Blob(["2"]) },
+          ],
+          { concurrency: 1 },
+        ),
+      ).rejects.toThrow(
+        "Uploading 1.png failed: Storage upload failed with HTTP 403",
+      )
+      expect(mockPost).toHaveBeenCalledTimes(1)
+    })
+
+    it("uploadItemMedia refuses a context count that does not match the chunk", async () => {
+      mockPost.mockResolvedValue([context])
+
+      await expect(
+        sdk.drops.uploadItemMedia("drop", [
+          { filename: "1.png", data: new Blob(["1"]) },
+          { filename: "2.png", data: new Blob(["2"]) },
+        ]),
+      ).rejects.toThrow("Expected 2 upload contexts, got 1")
+    })
+  })
+
   describe("nfts", () => {
     it("get calls correct endpoint", async () => {
       mockGet.mockResolvedValue({ nft: {} })

@@ -132,6 +132,36 @@ await uploadToContext(context, new Blob([csvBytes]), {
 })
 ```
 
+`uploadItemMedia` saves a set of item media files as the drop's items, replacing
+any it already has. It puts every file in one upload batch (a new UUID unless
+you pass `uploadBatchId`), requests upload contexts 50 files at a time and
+uploads each chunk before requesting the next, then saves the batch by filename
+with `saveItemMediaBatch`. Without a manifest, items are numbered 1 to n in the
+order of `files`. A file's `data` can be a function, so a large drop is read one
+file at a time:
+
+```typescript
+import { readFile } from "node:fs/promises"
+
+const result = await creator.drops.uploadItemMedia(
+  "my-drop",
+  ["1.png", "2.png"].map(filename => ({
+    filename,
+    data: async () =>
+      new Blob([new Uint8Array(await readFile(`media/${filename}`))]),
+  })),
+  {
+    manifest: { filename: "manifest.csv", data: new Blob([csvBytes]) },
+    onProgress: ({ uploaded, total }) => console.error(`${uploaded}/${total}`),
+  },
+)
+// { upload_batch_id: "...", item_count: 2, success: true }
+```
+
+For the steps one at a time, pass one `upload_batch_id` to every
+`createItemMediaUpload` call, upload each context with `uploadToContext`, then
+call `saveItemMediaBatch("my-drop", { upload_batch_id, filenames })`.
+
 ## Events
 
 ```typescript
