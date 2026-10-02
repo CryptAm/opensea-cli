@@ -333,4 +333,4 @@ The package exports:
 | `OpenSeaCLI` | Main SDK class with all API domain methods |
 | `OpenSeaClient` | Low-level HTTP client (for advanced usage) |
 | `OpenSeaAPIError` | Error class thrown on API failures |
-| All types from `types/api.ts` | TypeScript interfaces for all API responses |
+| All API response types | TypeScript interfaces for all API responses |
